@@ -40,7 +40,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
         }
         setSession(live);
       }
-    }, 500);
+    }, 300);
 
     return () => clearInterval(interval);
   }, [session.pin, session.currentQuestionIndex]);
@@ -55,6 +55,8 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
   }, [session.state, confettiTriggered]);
 
   const currentQ = session.quiz.questions[session.currentQuestionIndex];
+  const maxTime = currentQ?.timeLimit || 15;
+  const timePercent = Math.max(0, Math.min(100, (session.timeRemaining / maxTime) * 100));
 
   const handleSelectAnswer = (optIndex: number) => {
     if (answeredThisRound || session.state !== 'question_active') return;
@@ -101,6 +103,19 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
     };
     saveActiveSession(updatedSession);
     setSession(updatedSession);
+
+    // If solo player (only 1 player in session), instantly reveal answer after 800ms
+    if (session.players && session.players.length <= 1) {
+      setTimeout(() => {
+        const revealedSession: GameSession = {
+          ...updatedSession,
+          state: 'question_reveal',
+          timeRemaining: 5
+        };
+        saveActiveSession(revealedSession);
+        setSession(revealedSession);
+      }, 800);
+    }
   };
 
   const colors = [
@@ -113,6 +128,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
   const shapes = ['▲', '◆', '●', '■'];
 
   const livePlayer = (session.players || []).find(p => p.id === currentPlayer.id) || currentPlayer;
+  const isSoloPlayer = session.players && session.players.length <= 1;
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -148,6 +164,27 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
       {session.state === 'question_active' && currentQ && (
         <div className="space-y-6">
+          {/* Countdown Timer Visual Bar */}
+          <div className="bg-blue-900 border border-blue-700 rounded-2xl p-4 shadow-xl space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold">
+              <div className="flex items-center space-x-1.5 text-blue-200">
+                <Clock className="w-4 h-4 text-yellow-400 animate-spin" />
+                <span>{lang === 'id' ? 'Sisa Waktu:' : 'Time Remaining:'}</span>
+              </div>
+              <span className={`text-sm font-mono font-black ${session.timeRemaining <= 5 ? 'text-rose-400 animate-bounce' : 'text-yellow-400'}`}>
+                {session.timeRemaining}s ({maxTime}s limit)
+              </span>
+            </div>
+            <div className="w-full bg-blue-950 h-3 rounded-full overflow-hidden p-0.5 border border-blue-800">
+              <div
+                className={`h-full rounded-full transition-all duration-1000 ${
+                  session.timeRemaining <= 5 ? 'bg-rose-500 animate-pulse' : 'bg-yellow-400'
+                }`}
+                style={{ width: `${timePercent}%` }}
+              />
+            </div>
+          </div>
+
           <div className="bg-blue-900 border border-blue-700 rounded-3xl p-6 text-center shadow-xl">
             <span className="text-3xl mb-2 block">{currentQ.image || '🎯'}</span>
             <h2 className="text-xl sm:text-2xl font-black text-white leading-snug">{currentQ.question}</h2>
@@ -178,32 +215,68 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
           {answeredThisRound && (
             <div className="text-center py-4 bg-blue-900 border border-blue-700 rounded-2xl animate-fade-in">
-              <p className="text-yellow-300 text-sm font-bold">{t.answerSubmitted}</p>
+              <p className="text-yellow-300 text-sm font-bold">
+                {isSoloPlayer ? (lang === 'id' ? 'Jawaban tercatat! Memproses hasil...' : 'Answer recorded! Processing result...') : t.answerSubmitted}
+              </p>
             </div>
           )}
         </div>
       )}
 
       {session.state === 'question_reveal' && currentQ && (
-        <div className="text-center py-12 bg-blue-900 border border-blue-700 rounded-3xl p-8 shadow-2xl animate-fade-in">
-          {selectedAnswer === currentQ.correctAnswer ? (
-            <div>
-              <CheckCircle2 className="w-16 h-16 text-yellow-400 mx-auto mb-3 animate-bounce" />
-              <h3 className="text-2xl font-black text-white mb-1">{t.correct}</h3>
-              <p className="text-yellow-300 text-sm font-bold">+{lastPointsEarned || 1000} {t.pointsAdded}</p>
-            </div>
-          ) : (
-            <div>
-              <XCircle className="w-16 h-16 text-rose-300 mx-auto mb-3 animate-pulse" />
-              <h3 className="text-2xl font-black text-white mb-1">{t.incorrect}</h3>
-              <p className="text-blue-200 text-sm">{t.correctWas} <strong className="text-yellow-400">{currentQ.options[currentQ.correctAnswer]}</strong></p>
+        <div className="space-y-6">
+          <div className="text-center py-12 bg-blue-900 border border-blue-700 rounded-3xl p-8 shadow-2xl animate-fade-in">
+            {selectedAnswer === currentQ.correctAnswer ? (
+              <div>
+                <CheckCircle2 className="w-16 h-16 text-yellow-400 mx-auto mb-3 animate-bounce" />
+                <h3 className="text-2xl font-black text-white mb-1">{t.correct}</h3>
+                <p className="text-yellow-300 text-sm font-bold">+{lastPointsEarned || 1000} {t.pointsAdded}</p>
+              </div>
+            ) : (
+              <div>
+                <XCircle className="w-16 h-16 text-rose-300 mx-auto mb-3 animate-pulse" />
+                <h3 className="text-2xl font-black text-white mb-1">{t.incorrect}</h3>
+                <p className="text-blue-200 text-sm">{t.correctWas} <strong className="text-yellow-400">{currentQ.options[currentQ.correctAnswer]}</strong></p>
+              </div>
+            )}
+          </div>
+
+          {/* For solo player in reveal state, show Next Question button to advance immediately without waiting */}
+          {isSoloPlayer && (
+            <div className="text-center">
+              <button
+                onClick={() => {
+                  soundManager.playClick();
+                  if (session.currentQuestionIndex + 1 < session.quiz.questions.length) {
+                    const nextSession: GameSession = {
+                      ...session,
+                      state: 'question_active',
+                      currentQuestionIndex: session.currentQuestionIndex + 1,
+                      timeRemaining: session.quiz.questions[session.currentQuestionIndex + 1].timeLimit || 15
+                    };
+                    saveActiveSession(nextSession);
+                    setSession(nextSession);
+                  } else {
+                    const podiumSession: GameSession = {
+                      ...session,
+                      state: 'podium',
+                      timeRemaining: 0
+                    };
+                    saveActiveSession(podiumSession);
+                    setSession(podiumSession);
+                  }
+                }}
+                className="px-8 py-3.5 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-xl shadow-yellow-400/30"
+              >
+                {session.currentQuestionIndex + 1 < session.quiz.questions.length ? t.nextQuestion : t.viewResults}
+              </button>
             </div>
           )}
         </div>
       )}
 
       {session.state === 'podium' && (
-        <div className="bg-blue-900 border border-blue-700 rounded-3xl p-8 text-center shadow-2xl animate-fade-in">
+        <div className="bg-blue-900 border border-blue-700 rounded-3xl p-8 sm:p-12 text-center shadow-2xl animate-fade-in">
           <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-4 animate-bounce" />
           <h2 className="text-2xl font-black text-white mb-2">{t.gameOver}</h2>
           <p className="text-blue-200 text-sm mb-6">{t.finalScore} <strong className="text-yellow-400">{livePlayer.score} pts</strong></p>
