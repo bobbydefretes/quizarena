@@ -73,8 +73,31 @@ async function startServer() {
   const sessions = loadPersistedSessions();
   console.log(`Loaded ${sessions.size} persisted sessions from disk.`);
 
+  // Helper to get session from memory or disk
+  function getSession(pin: string): any | null {
+    const cleanPin = String(pin || '').trim();
+    if (!cleanPin) return null;
+    let s = sessions.get(cleanPin);
+    if (!s) {
+      const diskSessions = loadPersistedSessions();
+      s = diskSessions.get(cleanPin);
+      if (s) {
+        sessions.set(cleanPin, s);
+      }
+    }
+    return s || null;
+  }
+
   // List all active sessions
   app.get('/api/sessions/active', (_req, res) => {
+    // Merge disk sessions in case of external updates
+    const disk = loadPersistedSessions();
+    for (const [k, v] of disk.entries()) {
+      if (!sessions.has(k)) {
+        sessions.set(k, v);
+      }
+    }
+
     const list: any[] = [];
     for (const [pin, s] of sessions.entries()) {
       list.push({
@@ -82,7 +105,7 @@ async function startServer() {
         title: s.quiz?.title || 'Unknown Quiz',
         state: s.state,
         playerCount: Array.isArray(s.players) ? s.players.length : 0,
-        createdAt: s.createdAt || Date.now()
+        createdAt: s.createdAt || s.lastUpdated || Date.now()
       });
     }
     return res.json({ sessions: list });
@@ -91,11 +114,11 @@ async function startServer() {
   // Get single session by PIN
   app.get('/api/session/:pin', (req, res) => {
     const pin = String(req.params.pin || '').trim();
-    const session = sessions.get(pin);
+    const session = getSession(pin);
     if (!session) {
       return res.status(404).json({
         error: 'SESSION_NOT_FOUND',
-        message: 'Sesi game tidak ditemukan. Pastikan Host masih membuka Lobby permainan.'
+        message: `PIN Game ${pin} tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.`
       });
     }
     return res.json(session);
@@ -112,20 +135,21 @@ async function startServer() {
     session.lastUpdated = Date.now();
     
     // If session already exists, merge players if new session has fewer players
-    const existing = sessions.get(pin);
+    const existing = getSession(pin);
     if (existing && Array.isArray(existing.players) && (!Array.isArray(session.players) || session.players.length < existing.players.length)) {
       session.players = existing.players;
     }
 
     sessions.set(pin, session);
     savePersistedSessions(sessions);
+    console.log(`[SERVER] Saved/Updated session PIN: ${pin}, state: ${session.state}, players: ${(session.players || []).length}`);
     return res.json({ success: true, session });
   });
 
   // Host heartbeat
   app.post('/api/session/:pin/heartbeat', (req, res) => {
     const pin = String(req.params.pin || '').trim();
-    const session = sessions.get(pin);
+    const session = getSession(pin);
     if (session) {
       session.lastHeartbeat = Date.now();
       sessions.set(pin, session);
@@ -137,8 +161,9 @@ async function startServer() {
   // Player joins game lobby
   app.post('/api/session/:pin/join', (req, res) => {
     const pin = String(req.params.pin || '').trim();
-    const session = sessions.get(pin);
+    const session = getSession(pin);
     if (!session) {
+      console.warn(`[SERVER] Join rejected: PIN ${pin} not found`);
       return res.status(404).json({
         error: 'SESSION_NOT_FOUND',
         message: `PIN Game ${pin} tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.`
@@ -178,7 +203,7 @@ async function startServer() {
   // State update (e.g. host starts game, next question, podium)
   app.post('/api/session/:pin/state', (req, res) => {
     const pin = String(req.params.pin || '').trim();
-    const session = sessions.get(pin);
+    const session = getSession(pin);
     if (!session) {
       return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
     }
@@ -195,7 +220,7 @@ async function startServer() {
   // Player answer submission
   app.post('/api/session/:pin/answer', (req, res) => {
     const pin = String(req.params.pin || '').trim();
-    const session = sessions.get(pin);
+    const session = getSession(pin);
     if (!session) return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
 
     const { playerId, questionIndex, answer, isCorrect, points } = req.body;

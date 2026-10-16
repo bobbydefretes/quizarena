@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Quiz, GameSession, Player, Language } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 import { QrCode, Users, Play, ArrowLeft, Copy, Check, Sparkles, Share2, Radio } from 'lucide-react';
-import { pushLiveSession, fetchLiveSession, subscribeToSessionSync } from '../utils/gameSync';
+import { pushLiveSession, fetchLiveSession, subscribeToSessionSync, joinLiveSession } from '../utils/gameSync';
 import { soundManager } from '../utils/sound';
 import { translations } from '../utils/i18n';
 import { ShareQuizModal } from './ShareQuizModal';
@@ -182,6 +182,43 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
             >
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-yellow-400" />}
               <span>{copied ? t.linkCopied : (lang === 'id' ? 'Salin Link Client Game' : 'Copy Client Game Link')}</span>
+            </button>
+
+            <a
+              href={joinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => soundManager.playClick()}
+              className="w-full py-2.5 rounded-xl bg-blue-800 hover:bg-blue-700 text-yellow-300 hover:text-yellow-200 text-xs font-bold flex items-center justify-center space-x-2 border border-blue-600 transition-all shadow-sm"
+              title="Buka layar pemain di tab baru untuk mencoba kuis secara langsung"
+            >
+              <span>🎮</span>
+              <span>{lang === 'id' ? 'Buka Tab Client (Uji Coba)' : 'Open Client Tab (Test Play)'}</span>
+            </a>
+
+            <button
+              onClick={async () => {
+                soundManager.playClick();
+                const botNames = ['Budi', 'Siti', 'Rian', 'Dewi', 'Andi', 'Putri', 'Kevin', 'Maya'];
+                const botAvatars = ['🦊', '🐼', '🦄', '🦁', '🐯', '🐰', '🐸', '🤖'];
+                const botName = botNames[Math.floor(Math.random() * botNames.length)];
+                const botAvatar = botAvatars[Math.floor(Math.random() * botAvatars.length)];
+                const botPlayer: Player = {
+                  id: `player-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                  name: `${botName}`,
+                  avatar: botAvatar,
+                  score: 0,
+                  streak: 0,
+                  answers: {}
+                };
+                await pushLiveSession(sessionRef.current);
+                await joinLiveSession(pin, botPlayer);
+              }}
+              className="w-full py-2.5 rounded-xl bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold flex items-center justify-center space-x-2 border border-emerald-500/60 transition-all shadow-sm"
+              title="Tambahkan pemain uji coba langsung ke lobby ini untuk simulasi"
+            >
+              <Sparkles className="w-4 h-4 text-yellow-300" />
+              <span>{lang === 'id' ? '+ Tambah Pemain Uji Coba' : '+ Add Test Player'}</span>
             </button>
 
             <button

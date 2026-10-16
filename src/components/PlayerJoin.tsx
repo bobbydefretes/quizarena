@@ -33,15 +33,23 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
       setPin(initialPin);
     }
 
-    // Check for active open sessions on the server to help players discover open lobbies
-    fetch('/api/sessions/active')
-      .then(res => res.json())
-      .then(data => {
-        if (data && Array.isArray(data.sessions)) {
-          setAvailableSessions(data.sessions);
-        }
-      })
-      .catch(() => {});
+    const fetchActive = () => {
+      fetch('/api/sessions/active')
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data.sessions)) {
+            // Keep lobbies that are in 'lobby' state
+            const openLobbies = data.sessions.filter((s: any) => s.state === 'lobby');
+            setAvailableSessions(openLobbies);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchActive();
+    const interval = setInterval(fetchActive, 1500);
+
+    return () => clearInterval(interval);
   }, [initialPin]);
 
   // Real-time check on PIN status (detect if game is in lobby or already started)
@@ -214,29 +222,40 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
         )}
 
         {/* Available Open Lobbies on this Server */}
-        {availableSessions.length > 0 && pin.length !== 6 && (
+        {availableSessions.length > 0 && (
           <div className="mb-4 p-3.5 bg-blue-950/80 border border-blue-700/80 rounded-2xl shadow-inner">
             <div className="text-[11px] font-bold text-yellow-300 uppercase tracking-wider mb-2 flex items-center justify-between">
-              <span>{lang === 'id' ? 'Lobby Game Tersedia Saat Ini:' : 'Available Open Lobbies:'}</span>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">ONLINE</span>
+              <span>{lang === 'id' ? 'Lobby Game Terbuka di Server:' : 'Open Lobbies on Server:'}</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                {availableSessions.length} LIVE
+              </span>
             </div>
-            <div className="space-y-1.5">
-              {availableSessions.slice(0, 3).map(s => (
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              {availableSessions.map(s => (
                 <button
                   key={s.pin}
                   type="button"
                   onClick={() => {
                     soundManager.playClick();
                     setPin(s.pin);
+                    setError('');
                   }}
-                  className="w-full text-left p-2 rounded-xl bg-blue-900 hover:bg-blue-800 border border-blue-700/60 flex items-center justify-between transition-all group"
+                  className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between transition-all group ${
+                    pin === s.pin
+                      ? 'bg-yellow-400/20 border-yellow-400 text-white shadow-md'
+                      : 'bg-blue-900 hover:bg-blue-800 border-blue-700/60'
+                  }`}
                 >
                   <div className="truncate pr-2">
                     <span className="font-mono font-black text-yellow-400 mr-2 text-sm">{s.pin}</span>
                     <span className="text-white text-xs font-semibold">{s.title}</span>
                   </div>
-                  <span className="text-[11px] bg-yellow-400/20 text-yellow-300 group-hover:bg-yellow-400 group-hover:text-blue-950 px-2 py-1 rounded-lg font-bold transition-all shrink-0">
-                    {lang === 'id' ? 'Gunakan PIN' : 'Use PIN'}
+                  <span className={`text-[11px] px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 ${
+                    pin === s.pin
+                      ? 'bg-yellow-400 text-blue-950'
+                      : 'bg-yellow-400/20 text-yellow-300 group-hover:bg-yellow-400 group-hover:text-blue-950'
+                  }`}>
+                    {pin === s.pin ? (lang === 'id' ? 'PIN Terpilih' : 'Selected') : (lang === 'id' ? 'Pilih PIN Ini' : 'Select PIN')}
                   </span>
                 </button>
               ))}

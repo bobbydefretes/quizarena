@@ -31,6 +31,85 @@
     "lastUpdated": 1792134035849,
     "currentQuestionIndex": 0
   },
+  "488392": {
+    "pin": "488392",
+    "quizId": "quiz-tech-ai",
+    "quiz": {
+      "id": "quiz-tech-ai",
+      "title": "Artificial Intelligence & Tech Trivia",
+      "description": "Test your knowledge on modern AI models, tech history, and computer science milestones!",
+      "category": "Technology",
+      "difficulty": "Medium",
+      "creatorName": "QuizArena Team",
+      "createdAt": 1791856962428,
+      "coverImage": "🤖",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "Which company developed the Gemini family of multimodal AI models?",
+          "options": [
+            "OpenAI",
+            "Google",
+            "Anthropic",
+            "Meta"
+          ],
+          "correctAnswer": 1,
+          "timeLimit": 15,
+          "points": 1000,
+          "image": "🧠"
+        },
+        {
+          "id": "q2",
+          "question": "What does API stand for in software development?",
+          "options": [
+            "Advanced Program Integration",
+            "Application Programming Interface",
+            "Automated Protocol Interaction",
+            "Application Process Integration"
+          ],
+          "correctAnswer": 1,
+          "timeLimit": 15,
+          "points": 1000,
+          "image": "💻"
+        },
+        {
+          "id": "q3",
+          "question": "In what year was World Wide Web (WWW) invented by Tim Berners-Lee?",
+          "options": [
+            "1983",
+            "1989",
+            "1995",
+            "1991"
+          ],
+          "correctAnswer": 1,
+          "timeLimit": 20,
+          "points": 1000,
+          "image": "🌐"
+        },
+        {
+          "id": "q4",
+          "question": "Which programming language is known as the primary language for machine learning and data science?",
+          "options": [
+            "C++",
+            "Java",
+            "Python",
+            "Rust"
+          ],
+          "correctAnswer": 2,
+          "timeLimit": 15,
+          "points": 1000,
+          "image": "🐍"
+        }
+      ]
+    },
+    "hostId": "host-1",
+    "state": "lobby",
+    "currentQuestionIndex": 0,
+    "timeRemaining": 15,
+    "players": [],
+    "isActive": true,
+    "lastUpdated": 1792135214849
+  },
   "751802": {
     "pin": "751802",
     "quizId": "quiz-tech-ai",

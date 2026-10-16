@@ -119,8 +119,8 @@ export async function fetchLiveSession(pin: string): Promise<GameSession | null>
 }
 
 // Push session to Server API and local storage
-export async function pushLiveSession(session: GameSession): Promise<void> {
-  if (!session || !session.pin) return;
+export async function pushLiveSession(session: GameSession): Promise<boolean> {
+  if (!session || !session.pin) return false;
   const cleanPin = String(session.pin).trim();
   const normalizedSession: GameSession = { ...session, pin: cleanPin };
 
@@ -138,13 +138,15 @@ export async function pushLiveSession(session: GameSession): Promise<void> {
 
   // 3. Sync to server API for cross-device support (QR code mobile users)
   try {
-    await fetch('/api/session', {
+    const res = await fetch('/api/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(normalizedSession)
     });
+    return res.ok;
   } catch (e) {
     console.warn('Could not push session to server API', e);
+    return false;
   }
 }
 
@@ -194,7 +196,12 @@ export async function joinLiveSession(
   const firstTry = await attemptApiJoin();
   if (firstTry) return firstTry;
 
-  // 2. If server didn't have it or 404, check if local storage has it
+  // 2. Retry after a short delay in case server was processing session creation
+  await new Promise(r => setTimeout(r, 150));
+  const secondTry = await attemptApiJoin();
+  if (secondTry) return secondTry;
+
+  // 3. If server didn't have it or 404, check if local storage has it
   const localSession = getActiveSession(cleanPin);
   if (localSession) {
     // If localSession already started, deny join
@@ -209,8 +216,8 @@ export async function joinLiveSession(
     await pushLiveSession(localSession);
 
     // Try joining again via API
-    const secondTry = await attemptApiJoin();
-    if (secondTry) return secondTry;
+    const thirdTry = await attemptApiJoin();
+    if (thirdTry) return thirdTry;
 
     // Direct local join fallback
     if (!Array.isArray(localSession.players)) {
@@ -232,17 +239,17 @@ export async function joinLiveSession(
     return { success: true, session: localSession };
   }
 
-  // 3. Ask peer tabs via BroadcastChannel if any has this session
+  // 4. Ask peer tabs via BroadcastChannel if any has this session
   broadcastSyncMessage({
     type: 'REQUEST_SESSION',
     pin: cleanPin
   });
 
   // Short delay to give peer tab time to respond and re-push to server
-  await new Promise(r => setTimeout(r, 350));
+  await new Promise(r => setTimeout(r, 300));
 
-  const thirdTry = await attemptApiJoin();
-  if (thirdTry) return thirdTry;
+  const fourthTry = await attemptApiJoin();
+  if (fourthTry) return fourthTry;
 
   // Check local session again after broadcast
   const recheckedLocal = getActiveSession(cleanPin);
