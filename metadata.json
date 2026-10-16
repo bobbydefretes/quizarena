@@ -1,0 +1,6 @@
+{
+  "name": "QuizArena Live",
+  "description": "Create custom trivia quizzes, host live game sessions with QR code scanning and game PINs, and compete in real-time with leaderboard scoring and sound effects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
