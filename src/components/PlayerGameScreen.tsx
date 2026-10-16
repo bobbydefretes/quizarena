@@ -1,31 +1,36 @@
 import React, { useEffect, useState } from 'react';
-import { GameSession, Player } from '../types';
+import { GameSession, Player, Language } from '../types';
 import { getActiveSession, saveActiveSession } from '../utils/storage';
+import { translations } from '../utils/i18n';
 import { Trophy, CheckCircle2, XCircle, Flame, Clock } from 'lucide-react';
 import { soundManager } from '../utils/sound';
+import confetti from 'canvas-confetti';
 
 interface PlayerGameScreenProps {
   initialSession: GameSession;
   currentPlayer: Player;
   onLeave: () => void;
+  lang: Language;
 }
 
 export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
   initialSession,
   currentPlayer,
-  onLeave
+  onLeave,
+  lang
 }) => {
+  const t = translations[lang];
   const [session, setSession] = useState<GameSession>(initialSession);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [answeredThisRound, setAnsweredThisRound] = useState(false);
   const [lastPointsEarned, setLastPointsEarned] = useState<number | null>(null);
+  const [confettiTriggered, setConfettiTriggered] = useState(false);
 
   // Poll session state
   useEffect(() => {
     const interval = setInterval(() => {
       const live = getActiveSession(session.pin);
       if (live) {
-        // Reset answer state if question index changed
         if (live.currentQuestionIndex !== session.currentQuestionIndex || live.state === 'question_countdown') {
           if (live.currentQuestionIndex !== session.currentQuestionIndex) {
             setSelectedAnswer(null);
@@ -39,6 +44,15 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
     return () => clearInterval(interval);
   }, [session.pin, session.currentQuestionIndex]);
+
+  // Trigger confetti when podium is reached
+  useEffect(() => {
+    if (session.state === 'podium' && !confettiTriggered) {
+      setConfettiTriggered(true);
+      confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+      soundManager.playVictory();
+    }
+  }, [session.state, confettiTriggered]);
 
   const currentQ = session.quiz.questions[session.currentQuestionIndex];
 
@@ -98,7 +112,6 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
   const shapes = ['▲', '◆', '●', '■'];
 
-  // Find updated current player stats
   const livePlayer = (session.players || []).find(p => p.id === currentPlayer.id) || currentPlayer;
 
   return (
@@ -128,7 +141,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
       {session.state === 'question_countdown' && (
         <div className="text-center py-20 bg-blue-900 border border-blue-700 rounded-3xl shadow-2xl animate-fade-in">
-          <h3 className="text-blue-200 text-xs font-bold uppercase tracking-wider mb-2">Get Ready for Question {session.currentQuestionIndex + 1}</h3>
+          <h3 className="text-blue-200 text-xs font-bold uppercase tracking-wider mb-2">{t.getReady} {session.currentQuestionIndex + 1}</h3>
           <div className="text-6xl font-black text-yellow-400 animate-pulse">{session.timeRemaining}</div>
         </div>
       )}
@@ -165,7 +178,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
 
           {answeredThisRound && (
             <div className="text-center py-4 bg-blue-900 border border-blue-700 rounded-2xl animate-fade-in">
-              <p className="text-yellow-300 text-sm font-bold">Answer submitted! Waiting for other players...</p>
+              <p className="text-yellow-300 text-sm font-bold">{t.answerSubmitted}</p>
             </div>
           )}
         </div>
@@ -176,14 +189,14 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
           {selectedAnswer === currentQ.correctAnswer ? (
             <div>
               <CheckCircle2 className="w-16 h-16 text-yellow-400 mx-auto mb-3 animate-bounce" />
-              <h3 className="text-2xl font-black text-white mb-1">Correct!</h3>
-              <p className="text-yellow-300 text-sm font-bold">+{lastPointsEarned || 1000} points added</p>
+              <h3 className="text-2xl font-black text-white mb-1">{t.correct}</h3>
+              <p className="text-yellow-300 text-sm font-bold">+{lastPointsEarned || 1000} {t.pointsAdded}</p>
             </div>
           ) : (
             <div>
               <XCircle className="w-16 h-16 text-rose-300 mx-auto mb-3 animate-pulse" />
-              <h3 className="text-2xl font-black text-white mb-1">Incorrect!</h3>
-              <p className="text-blue-200 text-sm">The correct answer was: <strong className="text-yellow-400">{currentQ.options[currentQ.correctAnswer]}</strong></p>
+              <h3 className="text-2xl font-black text-white mb-1">{t.incorrect}</h3>
+              <p className="text-blue-200 text-sm">{t.correctWas} <strong className="text-yellow-400">{currentQ.options[currentQ.correctAnswer]}</strong></p>
             </div>
           )}
         </div>
@@ -192,14 +205,14 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
       {session.state === 'podium' && (
         <div className="bg-blue-900 border border-blue-700 rounded-3xl p-8 text-center shadow-2xl animate-fade-in">
           <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-4 animate-bounce" />
-          <h2 className="text-2xl font-black text-white mb-2">Game Over!</h2>
-          <p className="text-blue-200 text-sm mb-6">Your Final Score: <strong className="text-yellow-400">{livePlayer.score} pts</strong></p>
+          <h2 className="text-2xl font-black text-white mb-2">{t.gameOver}</h2>
+          <p className="text-blue-200 text-sm mb-6">{t.finalScore} <strong className="text-yellow-400">{livePlayer.score} pts</strong></p>
 
           <button
             onClick={onLeave}
             className="px-6 py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-lg shadow-yellow-400/30"
           >
-            Return to Dashboard
+            {t.returnDashboard}
           </button>
         </div>
       )}
