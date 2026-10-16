@@ -167,10 +167,10 @@ export async function joinLiveSession(
       });
 
       if (res.status === 403) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         return {
           success: false,
-          error: data.message || 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+          error: data.message || 'Game kuis ini telah selesai (Podium Juara).'
         };
       }
 
@@ -204,11 +204,11 @@ export async function joinLiveSession(
   // 3. If server didn't have it or 404, check if local storage has it
   const localSession = getActiveSession(cleanPin);
   if (localSession) {
-    // If localSession already started, deny join
-    if (localSession.state !== 'lobby') {
+    // Only reject if podium
+    if (localSession.state === 'podium') {
       return {
         success: false,
-        error: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+        error: 'Game kuis ini telah selesai (Podium Juara).'
       };
     }
 
@@ -225,7 +225,10 @@ export async function joinLiveSession(
     }
     const existingIdx = localSession.players.findIndex(p => p.id === player.id);
     if (existingIdx >= 0) {
-      localSession.players[existingIdx] = player;
+      localSession.players[existingIdx] = {
+        ...localSession.players[existingIdx],
+        ...player
+      };
     } else {
       localSession.players.push(player);
     }
@@ -254,10 +257,10 @@ export async function joinLiveSession(
   // Check local session again after broadcast
   const recheckedLocal = getActiveSession(cleanPin);
   if (recheckedLocal) {
-    if (recheckedLocal.state !== 'lobby') {
+    if (recheckedLocal.state === 'podium') {
       return {
         success: false,
-        error: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+        error: 'Game kuis ini telah selesai (Podium Juara).'
       };
     }
     return { success: true, session: recheckedLocal };

@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -158,7 +159,31 @@ async function startServer() {
     return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
   });
 
-  // Player joins game lobby
+  // Network info endpoint so Host can display Wi-Fi LAN IP for other PCs & phones
+  app.get('/api/network-info', (req, res) => {
+    const interfaces = os.networkInterfaces();
+    const ips: string[] = [];
+    
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          ips.push(net.address);
+        }
+      }
+    }
+
+    const hostHeader = req.headers.host || 'localhost:3000';
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const currentOrigin = `${proto}://${hostHeader}`;
+
+    return res.json({
+      origin: currentOrigin,
+      localIps: ips,
+      port: 3000
+    });
+  });
+
+  // Player joins game lobby or active game
   app.post('/api/session/:pin/join', (req, res) => {
     const pin = String(req.params.pin || '').trim();
     const session = getSession(pin);
@@ -170,11 +195,11 @@ async function startServer() {
       });
     }
 
-    // CRITICAL: When host starts the game (state !== 'lobby'), NO NEW PLAYERS CAN JOIN!
-    if (session.state !== 'lobby') {
+    // Only reject if game is completely finished (podium)
+    if (session.state === 'podium') {
       return res.status(403).json({
-        error: 'GAME_ALREADY_STARTED',
-        message: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+        error: 'GAME_FINISHED',
+        message: 'Game kuis ini telah selesai (Podium Juara). Silakan tunggu sesi game berikutnya dari Host!'
       });
     }
 
@@ -189,7 +214,10 @@ async function startServer() {
 
     const existingIndex = session.players.findIndex((p: any) => p.id === player.id);
     if (existingIndex >= 0) {
-      session.players[existingIndex] = player;
+      session.players[existingIndex] = {
+        ...session.players[existingIndex],
+        ...player
+      };
     } else {
       session.players.push(player);
     }
@@ -197,6 +225,7 @@ async function startServer() {
     session.lastUpdated = Date.now();
     sessions.set(pin, session);
     savePersistedSessions(sessions);
+    console.log(`[SERVER] Player ${player.name} (${player.avatar}) joined session ${pin} (state: ${session.state}). Total: ${session.players.length}`);
     return res.json({ success: true, session, player });
   });
 

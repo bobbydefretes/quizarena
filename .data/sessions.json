@@ -106,9 +106,15 @@
     "state": "lobby",
     "currentQuestionIndex": 0,
     "timeRemaining": 15,
-    "players": [],
+    "players": [
+      {
+        "id": "test-client-1",
+        "name": "ClientBedaPC",
+        "avatar": "🦁"
+      }
+    ],
     "isActive": true,
-    "lastUpdated": 1792135214849
+    "lastUpdated": 1792136348272
   },
   "751802": {
     "pin": "751802",
@@ -226,10 +232,15 @@
             "pointsEarned": 1000
           }
         }
+      },
+      {
+        "id": "late-client-2",
+        "name": "LatePlayer",
+        "avatar": "🦊"
       }
     ],
     "isActive": true,
-    "lastUpdated": 1792134384967,
+    "lastUpdated": 1792136359512,
     "currentQuestionIndex": 0,
     "timeRemaining": 15
   }

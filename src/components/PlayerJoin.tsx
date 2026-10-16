@@ -21,9 +21,9 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('🦊');
   const [error, setError] = useState('');
-  const [isGameStarted, setIsGameStarted] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<'lobby' | 'active' | 'podium' | 'not_found' | null>(null);
+  const [sessionInfo, setSessionInfo] = useState<{ title: string; currentQ: number; totalQ: number } | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(false);
-  const [sessionLobbyFound, setSessionLobbyFound] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [availableSessions, setAvailableSessions] = useState<{ pin: string; title: string; state: string }[]>([]);
@@ -38,9 +38,9 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
         .then(res => res.json())
         .then(data => {
           if (data && Array.isArray(data.sessions)) {
-            // Keep lobbies that are in 'lobby' state
-            const openLobbies = data.sessions.filter((s: any) => s.state === 'lobby');
-            setAvailableSessions(openLobbies);
+            // Keep all active rooms (lobby, countdown, active, reveal)
+            const activeRooms = data.sessions.filter((s: any) => s.state !== 'podium');
+            setAvailableSessions(activeRooms);
           }
         })
         .catch(() => {});
@@ -52,12 +52,12 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
     return () => clearInterval(interval);
   }, [initialPin]);
 
-  // Real-time check on PIN status (detect if game is in lobby or already started)
+  // Real-time check on PIN status
   useEffect(() => {
     const trimmedPin = pin.trim();
     if (trimmedPin.length !== 6) {
-      setIsGameStarted(false);
-      setSessionLobbyFound(false);
+      setSessionStatus(null);
+      setSessionInfo(null);
       setError('');
       return;
     }
@@ -71,47 +71,46 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
       setIsCheckingSession(false);
 
       if (session) {
-        if (session.state !== 'lobby') {
-          setIsGameStarted(true);
-          setSessionLobbyFound(false);
+        setSessionInfo({
+          title: session.quiz?.title || 'Kuis',
+          currentQ: (session.currentQuestionIndex || 0) + 1,
+          totalQ: session.quiz?.questions?.length || 1
+        });
+
+        if (session.state === 'podium') {
+          setSessionStatus('podium');
           setError(lang === 'id' 
-            ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
-            : 'The live game has already started! New players can no longer join.');
+            ? 'Game kuis ini telah selesai (Podium Juara). Silakan pilih game lain!' 
+            : 'This quiz game has already ended. Please choose another game!');
+        } else if (session.state === 'lobby') {
+          setSessionStatus('lobby');
+          setError('');
         } else {
-          setIsGameStarted(false);
-          setSessionLobbyFound(true);
+          setSessionStatus('active');
           setError('');
         }
       } else {
-        setSessionLobbyFound(false);
-        setIsGameStarted(false);
+        setSessionStatus('not_found');
+        setSessionInfo(null);
       }
     };
 
     checkPinStatus();
 
-    // Subscribe to real-time events in case host starts while user is typing
+    // Subscribe to real-time events
     const unsubscribe = subscribeToSessionSync((msg) => {
-      if (msg.pin === trimmedPin) {
-        if (msg.type === 'GAME_STARTED' || (msg.session && msg.session.state !== 'lobby')) {
-          if (isMounted) {
-            setIsGameStarted(true);
-            setSessionLobbyFound(false);
-            setError(lang === 'id' 
-              ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
-              : 'The live game has already started! New players can no longer join.');
-          }
-        } else if (msg.type === 'SESSION_UPDATE' && msg.session?.state === 'lobby') {
-          if (isMounted) {
-            setIsGameStarted(false);
-            setSessionLobbyFound(true);
-            setError('');
-          }
+      if (msg.pin === trimmedPin && msg.session) {
+        if (!isMounted) return;
+        if (msg.session.state === 'podium') {
+          setSessionStatus('podium');
+        } else if (msg.session.state === 'lobby') {
+          setSessionStatus('lobby');
+        } else {
+          setSessionStatus('active');
         }
       }
     });
 
-    // Short poll every 800ms to stay updated
     const interval = setInterval(checkPinStatus, 800);
 
     return () => {
@@ -139,10 +138,10 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
       return;
     }
 
-    if (isGameStarted) {
+    if (sessionStatus === 'podium') {
       setError(lang === 'id' 
-        ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
-        : 'The live game has already started! New players can no longer join.');
+        ? 'Game kuis ini telah selesai. Silakan minta Host membuka kuis baru.' 
+        : 'This quiz has ended. Please ask Host to create a new game.');
       soundManager.playWrong();
       return;
     }
@@ -164,11 +163,8 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
     if (!result.success || !result.session) {
       soundManager.playWrong();
       setError(result.error || (lang === 'id' 
-        ? 'Gagal bergabung. Pastikan PIN benar dan Host masih berada di Lobby.' 
-        : 'Failed to join. Make sure PIN is correct and Host is still in the lobby.'));
-      if (result.error && result.error.includes('sudah dimulai')) {
-        setIsGameStarted(true);
-      }
+        ? 'Gagal bergabung. Pastikan PIN benar dan Host masih membuka game.' 
+        : 'Failed to join. Make sure PIN is correct and Host still has game open.'));
       return;
     }
 
@@ -198,24 +194,33 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400" />
                 <span>{lang === 'id' ? 'Memeriksa status game...' : 'Checking game status...'}</span>
               </div>
-            ) : isGameStarted ? (
+            ) : sessionStatus === 'podium' ? (
               <div className="p-3.5 rounded-2xl bg-rose-500/25 border border-rose-500/50 text-rose-200 text-xs font-bold flex items-start space-x-2.5 shadow-md">
                 <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-black text-rose-300 uppercase tracking-wide">
-                    {lang === 'id' ? 'Game Sudah Dimulai' : 'Game In Progress'}
+                    {lang === 'id' ? 'Game Telah Selesai' : 'Game Finished'}
                   </div>
                   <div className="text-rose-200 text-[11px] mt-0.5 leading-relaxed">
                     {lang === 'id' 
-                      ? 'Host telah memulai permainan live. Pemain baru sudah tidak dapat bergabung lagi ke dalam sesi ini.' 
-                      : 'The host has already started this live game. New players can no longer join this session.'}
+                      ? 'Sesi kuis ini sudah selesai (Podium Juara). Silakan pilih kuis lain atau minta Host membuka sesi baru.' 
+                      : 'This quiz session has already finished.'}
                   </div>
                 </div>
               </div>
-            ) : sessionLobbyFound ? (
-              <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-semibold flex items-center space-x-2">
+            ) : sessionStatus === 'lobby' ? (
+              <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-semibold flex items-center space-x-2 shadow-sm">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>{lang === 'id' ? 'Lobby Terbuka • Siap bergabung' : 'Lobby Open • Ready to join'}</span>
+                <span>{lang === 'id' ? '🟢 Lobby Terbuka • Menunggu Host Mulai' : '🟢 Lobby Open • Waiting for Host to start'}</span>
+              </div>
+            ) : sessionStatus === 'active' ? (
+              <div className="p-2.5 rounded-xl bg-yellow-400/20 border border-yellow-400/40 text-yellow-300 text-xs font-semibold flex items-center space-x-2 shadow-sm">
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping inline-block"></span>
+                <span>
+                  {lang === 'id' 
+                    ? `⚡ Game Sedang Berlangsung (Soal ${sessionInfo?.currentQ || 1}/${sessionInfo?.totalQ || 1}) • Anda Bisa Masuk Sekarang!` 
+                    : `⚡ Game In Progress • You can join right now!`}
+                </span>
               </div>
             ) : null}
           </div>
@@ -263,7 +268,7 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
           </div>
         )}
 
-        {error && !isGameStarted && (
+        {error && sessionStatus !== 'podium' && (
           <div className="mb-6 p-4 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold shadow-md">
             <div className="flex items-start space-x-2.5">
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -271,8 +276,8 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 <div>{error}</div>
                 <div className="mt-2 text-[11px] text-rose-300">
                   {lang === 'id' 
-                    ? 'Tips: Pastikan Host masih berada di layar Lobby kuis dan 6 digit PIN sesuai dengan yang ada di layar Host.' 
-                    : 'Tip: Make sure the Host is on the Lobby screen and the 6-digit PIN matches.'}
+                    ? 'Tips: Pastikan Host masih berada di layar Lobby/Game kuis dan 6 digit PIN sesuai dengan yang ada di layar Host.' 
+                    : 'Tip: Make sure the Host is in the Lobby/Game and the 6-digit PIN matches.'}
                 </div>
               </div>
             </div>
@@ -306,7 +311,7 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 maxLength={15}
                 placeholder={t.nicknamePlaceholder}
                 value={name}
-                disabled={isSubmitting || isGameStarted}
+                disabled={isSubmitting || sessionStatus === 'podium'}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full bg-blue-950 border border-blue-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder-blue-400 focus:outline-none focus:border-yellow-400 text-sm disabled:opacity-60"
               />
@@ -322,7 +327,7 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 <button
                   key={av}
                   type="button"
-                  disabled={isSubmitting || isGameStarted}
+                  disabled={isSubmitting || sessionStatus === 'podium'}
                   onClick={() => { soundManager.playClick(); setAvatar(av); }}
                   className={`h-11 rounded-xl text-xl flex items-center justify-center transition-all disabled:opacity-50 ${
                     avatar === av 
@@ -338,9 +343,9 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
 
           <button
             type="submit"
-            disabled={isSubmitting || isGameStarted}
+            disabled={isSubmitting || sessionStatus === 'podium'}
             className={`w-full py-3.5 rounded-xl font-black text-sm shadow-xl flex items-center justify-center space-x-2 transition-all transform ${
-              isGameStarted
+              sessionStatus === 'podium'
                 ? 'bg-rose-900/60 border border-rose-700 text-rose-300 cursor-not-allowed opacity-80'
                 : 'bg-yellow-400 hover:bg-yellow-300 text-blue-950 shadow-yellow-400/30 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer'
             }`}
@@ -350,11 +355,13 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 <Loader2 className="w-4 h-4 animate-spin text-blue-950" />
                 <span>{lang === 'id' ? 'Menghubungkan...' : 'Connecting...'}</span>
               </>
-            ) : isGameStarted ? (
+            ) : sessionStatus === 'podium' ? (
               <>
                 <ShieldAlert className="w-4 h-4 text-rose-300" />
-                <span>{t.lobbyClosedBtn}</span>
+                <span>{lang === 'id' ? 'Game Selesai' : 'Game Finished'}</span>
               </>
+            ) : sessionStatus === 'active' ? (
+              <span>{lang === 'id' ? '⚡ Gabung ke Permainan Live' : '⚡ Join Live Game'}</span>
             ) : (
               <span>{t.enterLobbyBtn}</span>
             )}

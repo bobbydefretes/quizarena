@@ -27,6 +27,11 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
   const [showShareModal, setShowShareModal] = useState(false);
   const prevPlayerCountRef = useRef<number>(0);
 
+  const [networkIps, setNetworkIps] = useState<string[]>([]);
+  const [selectedIp, setSelectedIp] = useState<string>('');
+  const [activeUrlType, setActiveUrlType] = useState<'origin' | 'lan'>('origin');
+  const [showNetworkGuide, setShowNetworkGuide] = useState(false);
+
   // Keep a reference to current session for auto-healing and heartbeats
   const sessionRef = useRef<GameSession>({
     pin,
@@ -39,6 +44,22 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
     players: [],
     isActive: true
   });
+
+  // Fetch local LAN IPs for cross-PC & mobile Wi-Fi play
+  useEffect(() => {
+    fetch('/api/network-info')
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data.localIps) && data.localIps.length > 0) {
+          setNetworkIps(data.localIps);
+          setSelectedIp(data.localIps[0]);
+          if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            setActiveUrlType('lan');
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Initialize session in server & storage, and sync players in real-time
   useEffect(() => {
@@ -111,11 +132,13 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
   }, [pin, quiz]);
 
   // Client share link with client=true parameter
-  const joinUrl = `${window.location.origin}/?pin=${pin}&client=true`;
+  const originJoinUrl = `${window.location.origin}/?pin=${pin}&client=true`;
+  const lanJoinUrl = selectedIp ? `http://${selectedIp}:3000/?pin=${pin}&client=true` : originJoinUrl;
+  const currentActiveUrl = activeUrlType === 'lan' && selectedIp ? lanJoinUrl : originJoinUrl;
 
   const copyPinOrLink = () => {
     soundManager.playClick();
-    navigator.clipboard.writeText(joinUrl);
+    navigator.clipboard.writeText(currentActiveUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -134,7 +157,7 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
       isActive: true
     };
 
-    // Save and broadcast that game has started -> closes lobby so no new players can join
+    // Save and broadcast that game has started
     await pushLiveSession(session);
     onStartGame(session);
   };
@@ -162,10 +185,29 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
           <div className="absolute -top-12 -left-12 w-40 h-40 bg-yellow-400/20 rounded-full blur-2xl pointer-events-none"></div>
 
           <h3 className="text-yellow-300 text-xs font-black uppercase tracking-wider mb-2">{t.joinAt}</h3>
-          <p className="text-xs text-blue-200 mb-6">{t.scanQr}</p>
+          
+          {/* LAN vs Origin Toggle if local IP is detected */}
+          {networkIps.length > 0 && (
+            <div className="flex bg-blue-950 p-1 rounded-xl mb-4 text-xs font-bold border border-blue-800 w-full">
+              <button
+                onClick={() => setActiveUrlType('origin')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${activeUrlType === 'origin' ? 'bg-yellow-400 text-blue-950 shadow' : 'text-blue-300 hover:text-white'}`}
+              >
+                PC Ini / Tab
+              </button>
+              <button
+                onClick={() => setActiveUrlType('lan')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${activeUrlType === 'lan' ? 'bg-yellow-400 text-blue-950 shadow' : 'text-blue-300 hover:text-white'}`}
+              >
+                Beda PC & HP (Wi-Fi)
+              </button>
+            </div>
+          )}
 
-          <div className="bg-white p-4 rounded-2xl shadow-xl mb-6 inline-block">
-            <QRCodeSVG value={joinUrl} size={180} level="H" includeMargin={true} />
+          <p className="text-xs text-blue-200 mb-4">{t.scanQr}</p>
+
+          <div className="bg-white p-4 rounded-2xl shadow-xl mb-4 inline-block">
+            <QRCodeSVG value={currentActiveUrl} size={170} level="H" includeMargin={true} />
           </div>
 
           <div className="w-full bg-blue-950 border border-blue-700 rounded-2xl p-4 mb-4">
@@ -181,11 +223,11 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
               className="w-full py-2.5 rounded-xl bg-blue-950 hover:bg-blue-800 text-blue-100 hover:text-white text-xs font-bold flex items-center justify-center space-x-2 border border-blue-700 transition-all shadow-sm"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-yellow-400" />}
-              <span>{copied ? t.linkCopied : (lang === 'id' ? 'Salin Link Client Game' : 'Copy Client Game Link')}</span>
+              <span>{copied ? t.linkCopied : (activeUrlType === 'lan' ? 'Salin Link Wi-Fi (Beda PC/HP)' : 'Salin Link Client')}</span>
             </button>
 
             <a
-              href={joinUrl}
+              href={originJoinUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => soundManager.playClick()}
@@ -231,6 +273,24 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
               <Share2 className="w-4 h-4 text-blue-950" />
               <span>{lang === 'id' ? 'Bagikan ke WhatsApp / Medsos' : 'Share to WhatsApp / Social'}</span>
             </button>
+
+            {/* Network Guide Accordion Button */}
+            <button
+              type="button"
+              onClick={() => setShowNetworkGuide(!showNetworkGuide)}
+              className="w-full py-2 text-[11px] text-blue-300 hover:text-yellow-300 underline font-medium text-center"
+            >
+              {showNetworkGuide ? 'Sembunyikan Panduan Beda Browser & Beda PC' : '❓ Panduan Main Beda Browser & Beda PC / HP'}
+            </button>
+
+            {showNetworkGuide && (
+              <div className="text-left bg-blue-950/90 border border-blue-700 p-3 rounded-xl text-[11px] text-blue-200 space-y-2 mt-2 shadow-inner">
+                <div className="font-bold text-yellow-300">📱 Beda Browser di PC yang sama:</div>
+                <p>Buka Chrome, Edge, Firefox, atau Incognito. Buka link atau masukkan PIN {pin} di menu Player.</p>
+                <div className="font-bold text-yellow-300">💻 Beda PC / Laptop / HP (Wi-Fi):</div>
+                <p>Pastikan HP/PC terhubung ke Wi-Fi yang sama dengan Host. Buka link Wi-Fi Host di atas atau scan QR Code.</p>
+              </div>
+            )}
           </div>
         </div>
 

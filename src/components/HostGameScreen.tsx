@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { GameSession } from '../types';
 import { pushLiveSession, fetchLiveSession, subscribeToSessionSync } from '../utils/gameSync';
 import { Clock, CheckCircle2, Trophy, ArrowRight, BarChart3, TrendingUp } from 'lucide-react';
@@ -27,92 +27,112 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
   onGameOver
 }) => {
   const [session, setSession] = useState<GameSession>(initialSession);
-  const [timeRemaining, setTimeRemaining] = useState<number>(3); // Countdown state
+  const [timeRemaining, setTimeRemaining] = useState<number>(3); // 3-second Get Ready countdown
   const [activeTab, setActiveTab] = useState<'game' | 'analytics'>('game');
+
+  const sessionRef = useRef<GameSession>(session);
+  sessionRef.current = session;
 
   const currentQ = session.quiz.questions[session.currentQuestionIndex];
   const totalQ = session.quiz.questions.length;
 
-  // Poll for player answers and subscribe to real-time events
+  // Poll for player answers and subscribe to real-time events WITHOUT restarting the game timer
   useEffect(() => {
+    const pin = sessionRef.current.pin;
     const unsubscribe = subscribeToSessionSync((msg) => {
-      if (msg.pin === session.pin) {
+      if (msg.pin === pin) {
         if (msg.session) {
-          setSession(msg.session);
-        } else if (msg.type === 'PLAYER_ANSWER') {
-          fetchLiveSession(session.pin).then((live) => {
-            if (live) setSession(live);
+          setSession(prev => ({
+            ...prev,
+            players: msg.session?.players || prev.players
+          }));
+        } else if (msg.type === 'PLAYER_ANSWER' || msg.type === 'PLAYER_JOINED') {
+          fetchLiveSession(pin).then((live) => {
+            if (live && live.players) {
+              setSession(prev => ({
+                ...prev,
+                players: live.players
+              }));
+            }
           });
         } else if (msg.type === 'REQUEST_SESSION') {
-          pushLiveSession(session);
+          pushLiveSession(sessionRef.current);
         }
       }
     });
 
-    const timerInterval = setInterval(async () => {
-      const live = await fetchLiveSession(session.pin);
-      if (live) {
+    const pollPlayersInterval = setInterval(async () => {
+      const live = await fetchLiveSession(pin);
+      if (live && live.players) {
         setSession((prev) => ({
           ...prev,
-          players: live.players || prev.players
+          players: live.players
         }));
-      } else {
-        // Server might have restarted during live game; keep it alive!
-        pushLiveSession(session);
       }
     }, 600);
 
     return () => {
       unsubscribe();
-      clearInterval(timerInterval);
+      clearInterval(pollPlayersInterval);
     };
-  }, [session.pin, session]);
+  }, []); // Run once on mount
 
-  // Main Game Loop Timer
+  // Main Game Loop Timer - ticks reliably every 1000ms
   useEffect(() => {
-    const interval = setInterval(() => {
+    const timerInterval = setInterval(() => {
+      const currentSession = sessionRef.current;
+      const currentQuestion = currentSession.quiz.questions[currentSession.currentQuestionIndex];
+
       setTimeRemaining((prev) => {
         if (prev > 1) {
           const nextTime = prev - 1;
-          if (session.state === 'question_active') {
+          if (currentSession.state === 'question_active') {
             soundManager.playCountdown();
           }
-          pushLiveSession({
-            ...session,
+          const updated = {
+            ...currentSession,
             timeRemaining: nextTime
-          });
+          };
+          sessionRef.current = updated;
+          pushLiveSession(updated);
           return nextTime;
         }
 
-        // Time expired or countdown finished -> transition state
-        if (session.state === 'question_countdown') {
-          const qTime = currentQ.timeLimit || 15;
+        // Time expired (reached 1 -> 0): transition state
+        if (currentSession.state === 'question_countdown') {
+          // 3-second Get Ready countdown finished -> Show Question!
+          const qTime = currentQuestion?.timeLimit || 15;
           const updated: GameSession = {
-            ...session,
+            ...currentSession,
             state: 'question_active',
             timeRemaining: qTime
           };
+          sessionRef.current = updated;
           pushLiveSession(updated);
           setSession(updated);
           return qTime;
-        } else if (session.state === 'question_active') {
+        } else if (currentSession.state === 'question_active') {
+          // Question time expired -> Show Reveal
           soundManager.playWrong();
           const updated: GameSession = {
-            ...session,
+            ...currentSession,
             state: 'question_reveal',
-            timeRemaining: 5
+            timeRemaining: 4
           };
+          sessionRef.current = updated;
           pushLiveSession(updated);
           setSession(updated);
-          return 5;
-        } else if (session.state === 'question_reveal') {
-          if (session.currentQuestionIndex + 1 < totalQ) {
+          return 4;
+        } else if (currentSession.state === 'question_reveal') {
+          // Reveal finished -> Next question countdown or Podium
+          if (currentSession.currentQuestionIndex + 1 < totalQ) {
             const updated: GameSession = {
-              ...session,
+              ...currentSession,
               state: 'question_countdown',
-              currentQuestionIndex: session.currentQuestionIndex + 1,
+              currentQuestionIndex: currentSession.currentQuestionIndex + 1,
               timeRemaining: 3
             };
+            sessionRef.current = updated;
             pushLiveSession(updated);
             setSession(updated);
             return 3;
@@ -120,10 +140,11 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
             confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
             soundManager.playVictory();
             const updated: GameSession = {
-              ...session,
+              ...currentSession,
               state: 'podium',
               timeRemaining: 0
             };
+            sessionRef.current = updated;
             pushLiveSession(updated);
             setSession(updated);
             onGameOver(updated);
@@ -134,8 +155,23 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
       });
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [session.state, session.currentQuestionIndex, totalQ, currentQ, session, onGameOver]);
+    return () => clearInterval(timerInterval);
+  }, [totalQ, onGameOver]);
+
+  const handleSkipCountdown = () => {
+    soundManager.playClick();
+    const currentQuestion = sessionRef.current.quiz.questions[sessionRef.current.currentQuestionIndex];
+    const qTime = currentQuestion?.timeLimit || 15;
+    const updated: GameSession = {
+      ...sessionRef.current,
+      state: 'question_active',
+      timeRemaining: qTime
+    };
+    sessionRef.current = updated;
+    setTimeRemaining(qTime);
+    setSession(updated);
+    pushLiveSession(updated);
+  };
 
   const handleNextManually = () => {
     soundManager.playClick();
@@ -143,7 +179,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
       const updated: GameSession = {
         ...session,
         state: 'question_reveal',
-        timeRemaining: 5
+        timeRemaining: 4
       };
       pushLiveSession(updated);
       setSession(updated);
@@ -318,10 +354,25 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
       ) : (
         <>
           {session.state === 'question_countdown' && (
-            <div className="text-center py-24 bg-blue-900 border border-blue-700 rounded-3xl shadow-2xl animate-fade-in">
-              <span className="text-6xl mb-4 block">{currentQ.image || '🎯'}</span>
-              <h3 className="text-blue-200 text-sm font-bold uppercase tracking-wider mb-2">Get Ready! Question {session.currentQuestionIndex + 1}</h3>
-              <div className="text-7xl font-black text-yellow-400 animate-pulse">{timeRemaining}</div>
+            <div className="text-center py-16 bg-blue-900 border border-blue-700 rounded-3xl shadow-2xl animate-fade-in relative overflow-hidden">
+              <div className="absolute -top-12 -right-12 w-48 h-48 bg-yellow-400/15 rounded-full blur-2xl pointer-events-none"></div>
+              <span className="text-6xl mb-3 block animate-bounce">{currentQ?.image || '🎯'}</span>
+              <h3 className="text-yellow-300 text-xs font-black uppercase tracking-widest mb-1">
+                Bersiaplah! Pertanyaan {session.currentQuestionIndex + 1} dari {totalQ}
+              </h3>
+              <div className="text-8xl font-black text-yellow-400 animate-pulse my-4 font-mono tracking-tight">
+                {timeRemaining}
+              </div>
+              <p className="text-blue-200 text-xs mb-6 max-w-sm mx-auto">
+                Soal kuis akan otomatis tampil dalam {timeRemaining} detik...
+              </p>
+              <button
+                onClick={handleSkipCountdown}
+                className="px-6 py-2.5 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-xs shadow-lg transition-transform transform active:scale-95 inline-flex items-center space-x-2"
+              >
+                <span>Mulai Soal Sekarang (Lewati Countdown)</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
           )}
 
