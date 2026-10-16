@@ -1,8 +1,11 @@
-// Web Audio API Sound Synthesizer for QuizArena
+// Web Audio API Sound Synthesizer for QuizArena with BGM Loop
 
 class SoundManager {
   private ctx: AudioContext | null = null;
   public enabled: boolean = true;
+  public bgmEnabled: boolean = false;
+  public bgmVolume: number = 0.05;
+  private bgmTimer: number | null = null;
 
   private init() {
     if (!this.ctx && typeof window !== 'undefined') {
@@ -121,6 +124,62 @@ class SoundManager {
       osc.start(now + idx * 0.1);
       osc.stop(now + idx * 0.1 + 0.2);
     });
+  }
+
+  startBGM() {
+    if (!this.bgmEnabled || this.bgmTimer) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const chords = [
+      [261.63, 329.63, 392.00], // C major
+      [220.00, 261.63, 329.63], // A minor
+      [174.61, 220.00, 261.63], // F major
+      [196.00, 246.94, 293.66]  // G major
+    ];
+    let chordIdx = 0;
+
+    const playChord = () => {
+      if (!this.bgmEnabled || !this.ctx) return;
+      const notes = chords[chordIdx];
+      chordIdx = (chordIdx + 1) % chords.length;
+
+      const now = this.ctx.currentTime;
+      notes.forEach(freq => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(this.bgmVolume, now + 0.5);
+        gain.gain.linearRampToValueAtTime(0.001, now + 3.8);
+
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(now);
+        osc.stop(now + 4.0);
+      });
+    };
+
+    playChord();
+    this.bgmTimer = window.setInterval(playChord, 4000);
+  }
+
+  stopBGM() {
+    if (this.bgmTimer) {
+      clearInterval(this.bgmTimer);
+      this.bgmTimer = null;
+    }
+  }
+
+  toggleBGM(enable?: boolean) {
+    this.bgmEnabled = enable !== undefined ? enable : !this.bgmEnabled;
+    if (this.bgmEnabled) {
+      this.startBGM();
+    } else {
+      this.stopBGM();
+    }
   }
 }
 

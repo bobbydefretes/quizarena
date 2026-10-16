@@ -85,7 +85,10 @@ export const translations = {
     noHistoryDesc: 'Mainkan mode Solo atau ikuti kuis live untuk mencatat riwayat permainan Anda di sini!',
     score: 'Skor',
     mode: 'Mode',
-    date: 'Tanggal'
+    date: 'Tanggal',
+    // BGM settings
+    bgmMusic: 'Musik BGM',
+    bgmVolume: 'Volume BGM'
   },
   en: {
     navBrowse: 'Browse Quizzes',
@@ -171,7 +174,10 @@ export const translations = {
     noHistoryDesc: 'Play solo practice or join live quizzes to record your game history here!',
     score: 'Score',
     mode: 'Mode',
-    date: 'Date'
+    date: 'Date',
+    // BGM settings
+    bgmMusic: 'BGM Music',
+    bgmVolume: 'BGM Volume'
   }
 };
 
