@@ -1,46 +1,147 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Persistence file path
+const DATA_DIR = path.resolve(__dirname, '.data');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+
+function ensureDataDir() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.error('Failed to create data dir', err);
+  }
+}
+
+function loadPersistedSessions(): Map<string, any> {
+  const map = new Map<string, any>();
+  try {
+    ensureDataDir();
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      if (typeof data === 'object' && data !== null) {
+        for (const [key, val] of Object.entries(data)) {
+          map.set(String(key).trim(), val);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load persisted sessions, starting empty', err);
+  }
+  return map;
+}
+
+function savePersistedSessions(sessions: Map<string, any>) {
+  try {
+    ensureDataDir();
+    const obj: Record<string, any> = {};
+    for (const [key, val] of sessions.entries()) {
+      obj[key] = val;
+    }
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save sessions to file', err);
+  }
+}
+
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  
+  // Allow cross-origin requests from preview / dev hostnames
+  app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (_req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
 
-  // In-memory active game sessions
-  const sessions = new Map<string, any>();
+  app.use(express.json({ limit: '10mb' }));
 
-  // API Endpoints for real-time game sessions
+  // Load persistent sessions on boot
+  const sessions = loadPersistedSessions();
+  console.log(`Loaded ${sessions.size} persisted sessions from disk.`);
+
+  // List all active sessions
+  app.get('/api/sessions/active', (_req, res) => {
+    const list: any[] = [];
+    for (const [pin, s] of sessions.entries()) {
+      list.push({
+        pin,
+        title: s.quiz?.title || 'Unknown Quiz',
+        state: s.state,
+        playerCount: Array.isArray(s.players) ? s.players.length : 0,
+        createdAt: s.createdAt || Date.now()
+      });
+    }
+    return res.json({ sessions: list });
+  });
+
+  // Get single session by PIN
   app.get('/api/session/:pin', (req, res) => {
-    const pin = req.params.pin;
+    const pin = String(req.params.pin || '').trim();
     const session = sessions.get(pin);
     if (!session) {
-      return res.status(404).json({ error: 'SESSION_NOT_FOUND', message: 'Sesi game tidak ditemukan.' });
+      return res.status(404).json({
+        error: 'SESSION_NOT_FOUND',
+        message: 'Sesi game tidak ditemukan. Pastikan Host masih membuka Lobby permainan.'
+      });
     }
     return res.json(session);
   });
 
-  // Host initializes or updates full session
+  // Host initializes, heartbeats, or updates session
   app.post('/api/session', (req, res) => {
     const session = req.body;
     if (!session || !session.pin) {
       return res.status(400).json({ error: 'INVALID_SESSION', message: 'Data sesi tidak valid.' });
     }
-    sessions.set(session.pin, session);
+    const pin = String(session.pin).trim();
+    session.pin = pin;
+    session.lastUpdated = Date.now();
+    
+    // If session already exists, merge players if new session has fewer players
+    const existing = sessions.get(pin);
+    if (existing && Array.isArray(existing.players) && (!Array.isArray(session.players) || session.players.length < existing.players.length)) {
+      session.players = existing.players;
+    }
+
+    sessions.set(pin, session);
+    savePersistedSessions(sessions);
     return res.json({ success: true, session });
+  });
+
+  // Host heartbeat
+  app.post('/api/session/:pin/heartbeat', (req, res) => {
+    const pin = String(req.params.pin || '').trim();
+    const session = sessions.get(pin);
+    if (session) {
+      session.lastHeartbeat = Date.now();
+      sessions.set(pin, session);
+      return res.json({ success: true });
+    }
+    return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
   });
 
   // Player joins game lobby
   app.post('/api/session/:pin/join', (req, res) => {
-    const pin = req.params.pin;
+    const pin = String(req.params.pin || '').trim();
     const session = sessions.get(pin);
     if (!session) {
       return res.status(404).json({
         error: 'SESSION_NOT_FOUND',
-        message: 'Sesi game dengan PIN tersebut tidak ditemukan.'
+        message: `PIN Game ${pin} tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.`
       });
     }
 
@@ -48,7 +149,7 @@ async function startServer() {
     if (session.state !== 'lobby') {
       return res.status(403).json({
         error: 'GAME_ALREADY_STARTED',
-        message: 'Game live sudah dimulai! Pemain baru sudah tidak dapat bergabung lagi.'
+        message: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
       });
     }
 
@@ -68,13 +169,15 @@ async function startServer() {
       session.players.push(player);
     }
 
+    session.lastUpdated = Date.now();
     sessions.set(pin, session);
+    savePersistedSessions(sessions);
     return res.json({ success: true, session, player });
   });
 
   // State update (e.g. host starts game, next question, podium)
   app.post('/api/session/:pin/state', (req, res) => {
-    const pin = req.params.pin;
+    const pin = String(req.params.pin || '').trim();
     const session = sessions.get(pin);
     if (!session) {
       return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
@@ -83,13 +186,15 @@ async function startServer() {
     if (state !== undefined) session.state = state;
     if (currentQuestionIndex !== undefined) session.currentQuestionIndex = currentQuestionIndex;
     if (timeRemaining !== undefined) session.timeRemaining = timeRemaining;
+    session.lastUpdated = Date.now();
     sessions.set(pin, session);
+    savePersistedSessions(sessions);
     return res.json({ success: true, session });
   });
 
   // Player answer submission
   app.post('/api/session/:pin/answer', (req, res) => {
-    const pin = req.params.pin;
+    const pin = String(req.params.pin || '').trim();
     const session = sessions.get(pin);
     if (!session) return res.status(404).json({ error: 'SESSION_NOT_FOUND' });
 
@@ -106,7 +211,9 @@ async function startServer() {
         pointsEarned: points
       };
     }
+    session.lastUpdated = Date.now();
     sessions.set(pin, session);
+    savePersistedSessions(sessions);
     return res.json({ success: true, session });
   });
 

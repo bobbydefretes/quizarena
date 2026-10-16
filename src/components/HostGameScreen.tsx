@@ -43,6 +43,8 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
           fetchLiveSession(session.pin).then((live) => {
             if (live) setSession(live);
           });
+        } else if (msg.type === 'REQUEST_SESSION') {
+          pushLiveSession(session);
         }
       }
     });
@@ -54,24 +56,32 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
           ...prev,
           players: live.players || prev.players
         }));
+      } else {
+        // Server might have restarted during live game; keep it alive!
+        pushLiveSession(session);
       }
-    }, 400);
+    }, 600);
 
     return () => {
       unsubscribe();
       clearInterval(timerInterval);
     };
-  }, [session.pin]);
+  }, [session.pin, session]);
 
   // Main Game Loop Timer
   useEffect(() => {
     const interval = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev > 1) {
+          const nextTime = prev - 1;
           if (session.state === 'question_active') {
             soundManager.playCountdown();
           }
-          return prev - 1;
+          pushLiveSession({
+            ...session,
+            timeRemaining: nextTime
+          });
+          return nextTime;
         }
 
         // Time expired or countdown finished -> transition state

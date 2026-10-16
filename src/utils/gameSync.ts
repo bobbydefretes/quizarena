@@ -12,7 +12,7 @@ try {
 }
 
 export interface SyncMessage {
-  type: 'PLAYER_JOINED' | 'GAME_STARTED' | 'SESSION_UPDATE' | 'PLAYER_ANSWER';
+  type: 'PLAYER_JOINED' | 'GAME_STARTED' | 'SESSION_UPDATE' | 'PLAYER_ANSWER' | 'REQUEST_SESSION';
   pin: string;
   session?: GameSession;
   player?: Player;
@@ -65,33 +65,75 @@ export function subscribeToSessionSync(callback: (msg: SyncMessage) => void) {
   };
 }
 
-// Fetch session from Server API with fallback to local storage
+// Automatically heal server if another tab asks for a session we have
+if (typeof window !== 'undefined') {
+  subscribeToSessionSync((msg) => {
+    if (msg.type === 'REQUEST_SESSION' && msg.pin) {
+      const local = getActiveSession(msg.pin);
+      if (local) {
+        // Re-push to server so the server has it
+        pushLiveSession(local);
+        // Reply via broadcast
+        broadcastSyncMessage({
+          type: 'SESSION_UPDATE',
+          pin: msg.pin,
+          session: local
+        });
+      }
+    }
+  });
+}
+
+// Fetch session from Server API with fallback and auto-recovery
 export async function fetchLiveSession(pin: string): Promise<GameSession | null> {
+  const cleanPin = String(pin || '').trim();
+  if (!cleanPin) return null;
+
   try {
-    const res = await fetch(`/api/session/${encodeURIComponent(pin)}`);
+    const res = await fetch(`/api/session/${encodeURIComponent(cleanPin)}`);
     if (res.ok) {
       const serverSession: GameSession = await res.json();
-      // Keep localStorage in sync
+      // Keep localStorage updated
       saveActiveSession(serverSession);
       return serverSession;
     }
   } catch {
-    // Server fetch failed, fallback to local storage
+    // Network failure, proceed to local check
   }
 
-  return getActiveSession(pin);
+  // If server didn't have it or returned 404, check local storage
+  const local = getActiveSession(cleanPin);
+  if (local) {
+    // Auto-heal: Server might have restarted; re-push local session to server
+    try {
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(local)
+      }).catch(() => {});
+    } catch {}
+    return local;
+  }
+
+  return null;
 }
 
 // Push session to Server API and local storage
 export async function pushLiveSession(session: GameSession): Promise<void> {
-  // 1. Save to local storage first
-  saveActiveSession(session);
+  if (!session || !session.pin) return;
+  const cleanPin = String(session.pin).trim();
+  const normalizedSession: GameSession = { ...session, pin: cleanPin };
 
-  // 2. Broadcast to other tabs
+  // 1. Save to local storage first
+  saveActiveSession(normalizedSession);
+
+  // 2. Broadcast to other tabs immediately
   broadcastSyncMessage({
-    type: session.state === 'question_countdown' || session.state === 'question_active' ? 'GAME_STARTED' : 'SESSION_UPDATE',
-    pin: session.pin,
-    session
+    type: normalizedSession.state === 'question_countdown' || normalizedSession.state === 'question_active' 
+      ? 'GAME_STARTED' 
+      : 'SESSION_UPDATE',
+    pin: cleanPin,
+    session: normalizedSession
   });
 
   // 3. Sync to server API for cross-device support (QR code mobile users)
@@ -99,7 +141,7 @@ export async function pushLiveSession(session: GameSession): Promise<void> {
     await fetch('/api/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(session)
+      body: JSON.stringify(normalizedSession)
     });
   } catch (e) {
     console.warn('Could not push session to server API', e);
@@ -111,80 +153,113 @@ export async function joinLiveSession(
   pin: string,
   player: Player
 ): Promise<{ success: boolean; session?: GameSession; error?: string }> {
-  // 1. Try server API first
-  try {
-    const res = await fetch(`/api/session/${encodeURIComponent(pin)}/join`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ player })
-    });
+  const cleanPin = String(pin || '').trim();
 
-    if (res.status === 403) {
-      const data = await res.json();
+  // Helper function to attempt join via API
+  const attemptApiJoin = async (): Promise<{ success: boolean; session?: GameSession; error?: string } | null> => {
+    try {
+      const res = await fetch(`/api/session/${encodeURIComponent(cleanPin)}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player })
+      });
+
+      if (res.status === 403) {
+        const data = await res.json();
+        return {
+          success: false,
+          error: data.message || 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+        };
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        const updatedSession: GameSession = data.session;
+        saveActiveSession(updatedSession);
+        broadcastSyncMessage({
+          type: 'PLAYER_JOINED',
+          pin: cleanPin,
+          player,
+          session: updatedSession
+        });
+        return { success: true, session: updatedSession };
+      }
+    } catch {
+      // Network error
+    }
+    return null;
+  };
+
+  // 1. First attempt: call Server API
+  const firstTry = await attemptApiJoin();
+  if (firstTry) return firstTry;
+
+  // 2. If server didn't have it or 404, check if local storage has it
+  const localSession = getActiveSession(cleanPin);
+  if (localSession) {
+    // If localSession already started, deny join
+    if (localSession.state !== 'lobby') {
       return {
         success: false,
-        error: data.message || 'Game live sudah dimulai! Pemain baru sudah tidak dapat bergabung lagi.'
+        error: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
       };
     }
 
-    if (res.ok) {
-      const data = await res.json();
-      const updatedSession: GameSession = data.session;
-      saveActiveSession(updatedSession);
-      broadcastSyncMessage({
-        type: 'PLAYER_JOINED',
-        pin,
-        player,
-        session: updatedSession
-      });
-      return { success: true, session: updatedSession };
+    // Auto-heal server with local session
+    await pushLiveSession(localSession);
+
+    // Try joining again via API
+    const secondTry = await attemptApiJoin();
+    if (secondTry) return secondTry;
+
+    // Direct local join fallback
+    if (!Array.isArray(localSession.players)) {
+      localSession.players = [];
     }
-  } catch {
-    // API request failed, continue to local fallback
+    const existingIdx = localSession.players.findIndex(p => p.id === player.id);
+    if (existingIdx >= 0) {
+      localSession.players[existingIdx] = player;
+    } else {
+      localSession.players.push(player);
+    }
+    saveActiveSession(localSession);
+    broadcastSyncMessage({
+      type: 'PLAYER_JOINED',
+      pin: cleanPin,
+      player,
+      session: localSession
+    });
+    return { success: true, session: localSession };
   }
 
-  // 2. Local Fallback (in case offline or direct local session)
-  const localSession = getActiveSession(pin);
-  if (!localSession) {
-    return {
-      success: false,
-      error: 'PIN Game tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.'
-    };
-  }
-
-  // Check if Host has already started the game!
-  if (localSession.state !== 'lobby') {
-    return {
-      success: false,
-      error: 'Game live sudah dimulai! Pemain baru sudah tidak dapat bergabung lagi.'
-    };
-  }
-
-  // Add player to local session
-  const existingPlayers = localSession.players || [];
-  const existingIdx = existingPlayers.findIndex(p => p.id === player.id);
-  let updatedPlayers: Player[];
-  if (existingIdx >= 0) {
-    updatedPlayers = [...existingPlayers];
-    updatedPlayers[existingIdx] = player;
-  } else {
-    updatedPlayers = [...existingPlayers, player];
-  }
-
-  const updatedSession: GameSession = {
-    ...localSession,
-    players: updatedPlayers
-  };
-
-  saveActiveSession(updatedSession);
+  // 3. Ask peer tabs via BroadcastChannel if any has this session
   broadcastSyncMessage({
-    type: 'PLAYER_JOINED',
-    pin,
-    player,
-    session: updatedSession
+    type: 'REQUEST_SESSION',
+    pin: cleanPin
   });
 
-  return { success: true, session: updatedSession };
+  // Short delay to give peer tab time to respond and re-push to server
+  await new Promise(r => setTimeout(r, 350));
+
+  const thirdTry = await attemptApiJoin();
+  if (thirdTry) return thirdTry;
+
+  // Check local session again after broadcast
+  const recheckedLocal = getActiveSession(cleanPin);
+  if (recheckedLocal) {
+    if (recheckedLocal.state !== 'lobby') {
+      return {
+        success: false,
+        error: 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.'
+      };
+    }
+    return { success: true, session: recheckedLocal };
+  }
+
+  return {
+    success: false,
+    error: `PIN Game ${cleanPin} tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.`
+  };
 }
 
 // Submit player answer
@@ -196,19 +271,61 @@ export async function submitPlayerAnswer(
   isCorrect: boolean,
   points: number
 ): Promise<void> {
+  const cleanPin = String(pin || '').trim();
+
+  // Try API
   try {
-    await fetch(`/api/session/${encodeURIComponent(pin)}/answer`, {
+    await fetch(`/api/session/${encodeURIComponent(cleanPin)}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId, questionIndex, answer, isCorrect, points })
+      body: JSON.stringify({
+        playerId,
+        questionIndex,
+        answer,
+        isCorrect,
+        points
+      })
     });
-  } catch {
-    // Ignore server error
+  } catch (e) {
+    console.warn('Could not submit answer to server', e);
   }
 
+  // Also broadcast to tabs
   broadcastSyncMessage({
     type: 'PLAYER_ANSWER',
-    pin,
-    data: { playerId, questionIndex, answer, isCorrect, points }
+    pin: cleanPin,
+    player: {
+      id: playerId,
+      name: '',
+      avatar: '',
+      score: points,
+      streak: isCorrect ? 1 : 0,
+      answers: {
+        [questionIndex]: {
+          answer,
+          correct: isCorrect,
+          timeTaken: 5,
+          pointsEarned: points
+        }
+      }
+    }
   });
+
+  // Update local storage
+  const session = getActiveSession(cleanPin);
+  if (session && Array.isArray(session.players)) {
+    const p = session.players.find(pl => pl.id === playerId);
+    if (p) {
+      p.score = (p.score || 0) + points;
+      p.streak = isCorrect ? (p.streak || 0) + 1 : 0;
+      p.answers = p.answers || {};
+      p.answers[questionIndex] = {
+        answer,
+        correct: isCorrect,
+        timeTaken: 5,
+        pointsEarned: points
+      };
+      saveActiveSession(session);
+    }
+  }
 }

@@ -26,10 +26,22 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
   const [sessionLobbyFound, setSessionLobbyFound] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [availableSessions, setAvailableSessions] = useState<{ pin: string; title: string; state: string }[]>([]);
+
   useEffect(() => {
     if (initialPin) {
       setPin(initialPin);
     }
+
+    // Check for active open sessions on the server to help players discover open lobbies
+    fetch('/api/sessions/active')
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data.sessions)) {
+          setAvailableSessions(data.sessions);
+        }
+      })
+      .catch(() => {});
   }, [initialPin]);
 
   // Real-time check on PIN status (detect if game is in lobby or already started)
@@ -81,12 +93,18 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
               ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
               : 'The live game has already started! New players can no longer join.');
           }
+        } else if (msg.type === 'SESSION_UPDATE' && msg.session?.state === 'lobby') {
+          if (isMounted) {
+            setIsGameStarted(false);
+            setSessionLobbyFound(true);
+            setError('');
+          }
         }
       }
     });
 
-    // Short poll every 1 second to stay updated
-    const interval = setInterval(checkPinStatus, 1000);
+    // Short poll every 800ms to stay updated
+    const interval = setInterval(checkPinStatus, 800);
 
     return () => {
       isMounted = false;
@@ -195,10 +213,50 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
           </div>
         )}
 
+        {/* Available Open Lobbies on this Server */}
+        {availableSessions.length > 0 && pin.length !== 6 && (
+          <div className="mb-4 p-3.5 bg-blue-950/80 border border-blue-700/80 rounded-2xl shadow-inner">
+            <div className="text-[11px] font-bold text-yellow-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>{lang === 'id' ? 'Lobby Game Tersedia Saat Ini:' : 'Available Open Lobbies:'}</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">ONLINE</span>
+            </div>
+            <div className="space-y-1.5">
+              {availableSessions.slice(0, 3).map(s => (
+                <button
+                  key={s.pin}
+                  type="button"
+                  onClick={() => {
+                    soundManager.playClick();
+                    setPin(s.pin);
+                  }}
+                  className="w-full text-left p-2 rounded-xl bg-blue-900 hover:bg-blue-800 border border-blue-700/60 flex items-center justify-between transition-all group"
+                >
+                  <div className="truncate pr-2">
+                    <span className="font-mono font-black text-yellow-400 mr-2 text-sm">{s.pin}</span>
+                    <span className="text-white text-xs font-semibold">{s.title}</span>
+                  </div>
+                  <span className="text-[11px] bg-yellow-400/20 text-yellow-300 group-hover:bg-yellow-400 group-hover:text-blue-950 px-2 py-1 rounded-lg font-bold transition-all shrink-0">
+                    {lang === 'id' ? 'Gunakan PIN' : 'Use PIN'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && !isGameStarted && (
-          <div className="mb-6 p-3.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>{error}</span>
+          <div className="mb-6 p-4 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold shadow-md">
+            <div className="flex items-start space-x-2.5">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div>{error}</div>
+                <div className="mt-2 text-[11px] text-rose-300">
+                  {lang === 'id' 
+                    ? 'Tips: Pastikan Host masih berada di layar Lobby kuis dan 6 digit PIN sesuai dengan yang ada di layar Host.' 
+                    : 'Tip: Make sure the Host is on the Lobby screen and the 6-digit PIN matches.'}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

@@ -27,6 +27,19 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
   const [showShareModal, setShowShareModal] = useState(false);
   const prevPlayerCountRef = useRef<number>(0);
 
+  // Keep a reference to current session for auto-healing and heartbeats
+  const sessionRef = useRef<GameSession>({
+    pin,
+    quizId: quiz.id,
+    quiz,
+    hostId: 'host-1',
+    state: 'lobby',
+    currentQuestionIndex: 0,
+    timeRemaining: quiz.questions[0]?.timeLimit || 15,
+    players: [],
+    isActive: true
+  });
+
   // Initialize session in server & storage, and sync players in real-time
   useEffect(() => {
     const session: GameSession = {
@@ -40,6 +53,7 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
       players: [],
       isActive: true
     };
+    sessionRef.current = session;
 
     // Push initial session so API & local storage have it
     pushLiveSession(session);
@@ -50,6 +64,7 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
       }
       prevPlayerCountRef.current = newPlayers?.length || 0;
       setPlayers(newPlayers || []);
+      sessionRef.current.players = newPlayers || [];
     };
 
     // 1. Listen for instant BroadcastChannel events (same browser tabs/windows)
@@ -59,17 +74,23 @@ export const HostLobby: React.FC<HostLobbyProps> = ({
           if (msg.session && Array.isArray(msg.session.players)) {
             updatePlayersList(msg.session.players);
           }
+        } else if (msg.type === 'REQUEST_SESSION') {
+          // A client tab is requesting this PIN: immediately re-push to server!
+          pushLiveSession(sessionRef.current);
         }
       }
     });
 
-    // 2. Poll server & local storage every 250ms for cross-device support (mobile QR scan)
+    // 2. Poll server & local storage every 500ms; auto-heal if server lost the session
     const interval = setInterval(async () => {
       const current = await fetchLiveSession(pin);
       if (current && Array.isArray(current.players)) {
         updatePlayersList(current.players);
+      } else {
+        // Server doesn't have it or returned 404: re-push!
+        pushLiveSession(sessionRef.current);
       }
-    }, 250);
+    }, 500);
 
     // 3. Storage event listener as extra safety
     const handleStorage = async (e: StorageEvent) => {
