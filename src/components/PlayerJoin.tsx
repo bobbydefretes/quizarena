@@ -34,7 +34,7 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
     }
 
     const fetchActive = () => {
-      fetch('/api/sessions/active')
+      fetch('/api/sessions/active', { credentials: 'include' })
         .then(res => res.json())
         .then(data => {
           if (data && Array.isArray(data.sessions)) {

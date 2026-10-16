@@ -57,12 +57,18 @@ function savePersistedSessions(sessions: Map<string, any>) {
 async function startServer() {
   const app = express();
   
-  // Allow cross-origin requests from preview / dev hostnames
-  app.use((_req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+  // Allow cross-origin requests from preview / dev hostnames with credentials support
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    if (_req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.method === 'OPTIONS') {
       return res.sendStatus(200);
     }
     next();
@@ -166,7 +172,7 @@ async function startServer() {
     
     for (const name of Object.keys(interfaces)) {
       for (const net of interfaces[name] || []) {
-        if (net.family === 'IPv4' && !net.internal) {
+        if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) {
           ips.push(net.address);
         }
       }
@@ -175,11 +181,13 @@ async function startServer() {
     const hostHeader = req.headers.host || 'localhost:3000';
     const proto = req.headers['x-forwarded-proto'] || 'http';
     const currentOrigin = `${proto}://${hostHeader}`;
+    const isCloudEnv = !hostHeader.includes('localhost') && !hostHeader.includes('127.0.0.1');
 
     return res.json({
       origin: currentOrigin,
       localIps: ips,
-      port: 3000
+      port: 3000,
+      isCloudEnv
     });
   });
 

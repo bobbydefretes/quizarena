@@ -90,7 +90,9 @@ export async function fetchLiveSession(pin: string): Promise<GameSession | null>
   if (!cleanPin) return null;
 
   try {
-    const res = await fetch(`/api/session/${encodeURIComponent(cleanPin)}`);
+    const res = await fetch(`/api/session/${encodeURIComponent(cleanPin)}`, {
+      credentials: 'include'
+    });
     if (res.ok) {
       const serverSession: GameSession = await res.json();
       // Keep localStorage updated
@@ -109,6 +111,7 @@ export async function fetchLiveSession(pin: string): Promise<GameSession | null>
       fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(local)
       }).catch(() => {});
     } catch {}
@@ -141,6 +144,7 @@ export async function pushLiveSession(session: GameSession): Promise<boolean> {
     const res = await fetch('/api/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(normalizedSession)
     });
     return res.ok;
@@ -163,6 +167,7 @@ export async function joinLiveSession(
       const res = await fetch(`/api/session/${encodeURIComponent(cleanPin)}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ player })
       });
 
@@ -171,6 +176,14 @@ export async function joinLiveSession(
         return {
           success: false,
           error: data.message || 'Game kuis ini telah selesai (Podium Juara).'
+        };
+      }
+
+      if (res.status === 404) {
+        const data = await res.json().catch(() => ({}));
+        return {
+          success: false,
+          error: data.message || `PIN Game ${cleanPin} tidak ditemukan di server. Pastikan Host masih membuka Lobby kuis.`
         };
       }
 
@@ -186,15 +199,16 @@ export async function joinLiveSession(
         });
         return { success: true, session: updatedSession };
       }
-    } catch {
-      // Network error
+    } catch (e) {
+      console.warn('Error during join API call', e);
     }
     return null;
   };
 
   // 1. First attempt: call Server API
   const firstTry = await attemptApiJoin();
-  if (firstTry) return firstTry;
+  if (firstTry && firstTry.success) return firstTry;
+  if (firstTry && firstTry.error && firstTry.error.includes('selesai')) return firstTry;
 
   // 2. Retry after a short delay in case server was processing session creation
   await new Promise(r => setTimeout(r, 150));
@@ -288,6 +302,7 @@ export async function submitPlayerAnswer(
     await fetch(`/api/session/${encodeURIComponent(cleanPin)}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         playerId,
         questionIndex,
