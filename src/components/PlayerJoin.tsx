@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { GameSession, Player, Language } from '../types';
-import { getActiveSession, saveActiveSession, getStoredQuizzes } from '../utils/storage';
+import { fetchLiveSession, joinLiveSession, subscribeToSessionSync } from '../utils/gameSync';
 import { translations } from '../utils/i18n';
-import { Play, Sparkles, User, Smile } from 'lucide-react';
+import { Play, User, AlertTriangle, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-react';
 import { soundManager } from '../utils/sound';
 
 interface PlayerJoinProps {
@@ -21,6 +21,10 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('🦊');
   const [error, setError] = useState('');
+  const [isGameStarted, setIsGameStarted] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(false);
+  const [sessionLobbyFound, setSessionLobbyFound] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (initialPin) {
@@ -28,59 +32,97 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
     }
   }, [initialPin]);
 
+  // Real-time check on PIN status (detect if game is in lobby or already started)
+  useEffect(() => {
+    const trimmedPin = pin.trim();
+    if (trimmedPin.length !== 6) {
+      setIsGameStarted(false);
+      setSessionLobbyFound(false);
+      setError('');
+      return;
+    }
+
+    let isMounted = true;
+
+    const checkPinStatus = async () => {
+      setIsCheckingSession(true);
+      const session = await fetchLiveSession(trimmedPin);
+      if (!isMounted) return;
+      setIsCheckingSession(false);
+
+      if (session) {
+        if (session.state !== 'lobby') {
+          setIsGameStarted(true);
+          setSessionLobbyFound(false);
+          setError(lang === 'id' 
+            ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
+            : 'The live game has already started! New players can no longer join.');
+        } else {
+          setIsGameStarted(false);
+          setSessionLobbyFound(true);
+          setError('');
+        }
+      } else {
+        setSessionLobbyFound(false);
+        setIsGameStarted(false);
+      }
+    };
+
+    checkPinStatus();
+
+    // Subscribe to real-time events in case host starts while user is typing
+    const unsubscribe = subscribeToSessionSync((msg) => {
+      if (msg.pin === trimmedPin) {
+        if (msg.type === 'GAME_STARTED' || (msg.session && msg.session.state !== 'lobby')) {
+          if (isMounted) {
+            setIsGameStarted(true);
+            setSessionLobbyFound(false);
+            setError(lang === 'id' 
+              ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
+              : 'The live game has already started! New players can no longer join.');
+          }
+        }
+      }
+    });
+
+    // Short poll every 1 second to stay updated
+    const interval = setInterval(checkPinStatus, 1000);
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [pin, lang]);
+
   const avatars = ['🦊', '🐼', '🦄', '🦁', '🐯', '🐰', '🐸', '🤖', '🚀', '⭐', '🐱', '🐶'];
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pin.trim() || pin.trim().length !== 6) {
+    setError('');
+
+    const cleanPin = pin.trim();
+    if (!cleanPin || cleanPin.length !== 6) {
       setError(lang === 'id' ? 'Harap masukkan PIN Game 6 digit yang valid.' : 'Please enter a valid 6-digit Game PIN.');
+      soundManager.playWrong();
       return;
     }
     if (!name.trim()) {
       setError(lang === 'id' ? 'Harap masukkan nama panggilan Anda.' : 'Please enter your nickname.');
+      soundManager.playWrong();
       return;
     }
 
-    let session = getActiveSession(pin.trim());
-    if (!session) {
-      // Auto-fallback: if session doesn't exist in local storage, automatically initialize a valid session so the user can play instantly
-      const quizzes = getStoredQuizzes();
-      const quiz = quizzes[0] || {
-        id: 'default-quiz',
-        title: 'Quick Trivia',
-        description: 'Auto generated session',
-        category: 'General',
-        difficulty: 'Medium',
-        creatorName: 'System',
-        createdAt: Date.now(),
-        questions: [
-          {
-            id: 'dq1',
-            question: 'What is 2 + 2?',
-            options: ['3', '4', '5', '6'],
-            correctAnswer: 1,
-            timeLimit: 15,
-            points: 1000,
-            image: '🔢'
-          }
-        ]
-      };
-
-      session = {
-        pin: pin.trim(),
-        quizId: quiz.id,
-        quiz,
-        hostId: 'host-1',
-        state: 'question_active',
-        currentQuestionIndex: 0,
-        timeRemaining: quiz.questions[0]?.timeLimit || 15,
-        players: [],
-        isActive: true
-      };
-      saveActiveSession(session);
+    if (isGameStarted) {
+      setError(lang === 'id' 
+        ? 'Game live sudah dimulai oleh Host! Pemain baru sudah tidak dapat bergabung lagi.' 
+        : 'The live game has already started! New players can no longer join.');
+      soundManager.playWrong();
+      return;
     }
 
-    soundManager.playCorrect();
+    setIsSubmitting(true);
+
     const newPlayer: Player = {
       id: `player-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       name: name.trim(),
@@ -90,18 +132,28 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
       answers: {}
     };
 
-    // Add player to session and save
-    const updatedSession: GameSession = {
-      ...session,
-      players: [...(session.players || []), newPlayer]
-    };
-    saveActiveSession(updatedSession);
-    onJoined(updatedSession, newPlayer);
+    const result = await joinLiveSession(cleanPin, newPlayer);
+    setIsSubmitting(false);
+
+    if (!result.success || !result.session) {
+      soundManager.playWrong();
+      setError(result.error || (lang === 'id' 
+        ? 'Gagal bergabung. Pastikan PIN benar dan Host masih berada di Lobby.' 
+        : 'Failed to join. Make sure PIN is correct and Host is still in the lobby.'));
+      if (result.error && result.error.includes('sudah dimulai')) {
+        setIsGameStarted(true);
+      }
+      return;
+    }
+
+    // Success!
+    soundManager.playCorrect();
+    onJoined(result.session, newPlayer);
   };
 
   return (
-    <div className="max-w-md mx-auto px-4 py-16">
-      <div className="bg-blue-900 border border-blue-700 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+    <div className="max-w-md mx-auto px-4 py-12 sm:py-16">
+      <div className="bg-blue-900 border border-blue-700 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
         <div className="absolute -top-16 -right-16 w-48 h-48 bg-yellow-400/20 rounded-full blur-2xl pointer-events-none"></div>
 
         <div className="text-center mb-8">
@@ -112,27 +164,64 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
           <p className="text-xs text-blue-200 mt-1">{t.enterPinAvatar}</p>
         </div>
 
-        {error && (
-          <div className="mb-6 p-3.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold">
-            {error}
+        {/* Live Lobby Status Indicator */}
+        {pin.trim().length === 6 && (
+          <div className="mb-4">
+            {isCheckingSession ? (
+              <div className="flex items-center justify-center space-x-2 text-blue-300 text-xs py-1">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-400" />
+                <span>{lang === 'id' ? 'Memeriksa status game...' : 'Checking game status...'}</span>
+              </div>
+            ) : isGameStarted ? (
+              <div className="p-3.5 rounded-2xl bg-rose-500/25 border border-rose-500/50 text-rose-200 text-xs font-bold flex items-start space-x-2.5 shadow-md">
+                <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-black text-rose-300 uppercase tracking-wide">
+                    {lang === 'id' ? 'Game Sudah Dimulai' : 'Game In Progress'}
+                  </div>
+                  <div className="text-rose-200 text-[11px] mt-0.5 leading-relaxed">
+                    {lang === 'id' 
+                      ? 'Host telah memulai permainan live. Pemain baru sudah tidak dapat bergabung lagi ke dalam sesi ini.' 
+                      : 'The host has already started this live game. New players can no longer join this session.'}
+                  </div>
+                </div>
+              </div>
+            ) : sessionLobbyFound ? (
+              <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-semibold flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{lang === 'id' ? 'Lobby Terbuka • Siap bergabung' : 'Lobby Open • Ready to join'}</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {error && !isGameStarted && (
+          <div className="mb-6 p-3.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleJoin} className="space-y-6">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">{t.gamePin} *</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">
+              {t.gamePin} *
+            </label>
             <input
               type="text"
               maxLength={6}
               placeholder="e.g. 849201"
               value={pin}
+              disabled={isSubmitting}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              className="w-full bg-blue-950 border border-blue-700 rounded-xl px-4 py-3 text-center text-2xl font-mono tracking-widest text-yellow-400 placeholder-blue-500 focus:outline-none focus:border-yellow-400 shadow-inner"
+              className="w-full bg-blue-950 border border-blue-700 rounded-xl px-4 py-3 text-center text-2xl font-mono tracking-widest text-yellow-400 placeholder-blue-500 focus:outline-none focus:border-yellow-400 shadow-inner disabled:opacity-60"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">{t.yourNickname}</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">
+              {t.yourNickname}
+            </label>
             <div className="relative">
               <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300" />
               <input
@@ -140,22 +229,28 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
                 maxLength={15}
                 placeholder={t.nicknamePlaceholder}
                 value={name}
+                disabled={isSubmitting || isGameStarted}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-blue-950 border border-blue-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder-blue-400 focus:outline-none focus:border-yellow-400 text-sm"
+                className="w-full bg-blue-950 border border-blue-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder-blue-400 focus:outline-none focus:border-yellow-400 text-sm disabled:opacity-60"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">{t.chooseAvatar}</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-blue-200 mb-2">
+              {t.chooseAvatar}
+            </label>
             <div className="grid grid-cols-6 gap-2">
               {avatars.map((av) => (
                 <button
                   key={av}
                   type="button"
+                  disabled={isSubmitting || isGameStarted}
                   onClick={() => { soundManager.playClick(); setAvatar(av); }}
-                  className={`h-11 rounded-xl text-xl flex items-center justify-center transition-all ${
-                    avatar === av ? 'bg-yellow-400 text-blue-950 font-bold scale-105 shadow-lg shadow-yellow-400/30' : 'bg-blue-950 hover:bg-blue-800 border border-blue-700 text-white'
+                  className={`h-11 rounded-xl text-xl flex items-center justify-center transition-all disabled:opacity-50 ${
+                    avatar === av 
+                      ? 'bg-yellow-400 text-blue-950 font-bold scale-105 shadow-lg shadow-yellow-400/30' 
+                      : 'bg-blue-950 hover:bg-blue-800 border border-blue-700 text-white'
                   }`}
                 >
                   {av}
@@ -166,9 +261,26 @@ export const PlayerJoin: React.FC<PlayerJoinProps> = ({
 
           <button
             type="submit"
-            className="w-full py-3.5 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-xl shadow-yellow-400/30 transition-transform transform hover:-translate-y-0.5"
+            disabled={isSubmitting || isGameStarted}
+            className={`w-full py-3.5 rounded-xl font-black text-sm shadow-xl flex items-center justify-center space-x-2 transition-all transform ${
+              isGameStarted
+                ? 'bg-rose-900/60 border border-rose-700 text-rose-300 cursor-not-allowed opacity-80'
+                : 'bg-yellow-400 hover:bg-yellow-300 text-blue-950 shadow-yellow-400/30 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer'
+            }`}
           >
-            {t.enterLobbyBtn}
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-blue-950" />
+                <span>{lang === 'id' ? 'Menghubungkan...' : 'Connecting...'}</span>
+              </>
+            ) : isGameStarted ? (
+              <>
+                <ShieldAlert className="w-4 h-4 text-rose-300" />
+                <span>{t.lobbyClosedBtn}</span>
+              </>
+            ) : (
+              <span>{t.enterLobbyBtn}</span>
+            )}
           </button>
         </form>
       </div>

@@ -61,6 +61,9 @@ export const translations = {
     nicknamePlaceholder: 'cth. TriviaMaster',
     chooseAvatar: 'Pilih Avatar',
     enterLobbyBtn: 'Masuk ke Lobby Game',
+    gameAlreadyStarted: 'Game live sudah dimulai! Pemain baru sudah tidak dapat bergabung lagi.',
+    sessionNotFound: 'PIN Game tidak ditemukan. Pastikan Host sudah membuka Lobby permainan.',
+    lobbyClosedBtn: 'Game Sudah Dimulai (Pendaftaran Ditutup)',
     // Player Game
     getReady: 'Bersiaplah! Pertanyaan',
     answerSubmitted: 'Jawaban terkirim! Menunggu pemain lain...',
@@ -88,7 +91,18 @@ export const translations = {
     date: 'Tanggal',
     // BGM settings
     bgmMusic: 'Musik BGM',
-    bgmVolume: 'Volume BGM'
+    bgmVolume: 'Volume BGM',
+    // Social Sharing
+    shareQuiz: 'Bagikan Kuis',
+    shareSubtitle: 'Bagikan kuis ini langsung ke media sosial bersama kartu gambar preview!',
+    previewCard: 'Preview Kartu Gambar',
+    downloadCard: 'Unduh Gambar Card',
+    shareWhatsApp: 'WhatsApp',
+    shareTwitter: 'Twitter / X',
+    shareFacebook: 'Facebook',
+    shareDevice: 'Bagikan via HP/Device',
+    copyShareLink: 'Salin Link',
+    shareMessageText: 'Yuk ikutan main kuis seru ini di QuizArena Live!'
   },
   en: {
     navBrowse: 'Browse Quizzes',
@@ -150,6 +164,9 @@ export const translations = {
     nicknamePlaceholder: 'e.g. TriviaMaster',
     chooseAvatar: 'Choose Avatar',
     enterLobbyBtn: 'Enter Game Lobby',
+    gameAlreadyStarted: 'The live game has already started! New players can no longer join.',
+    sessionNotFound: 'Game PIN not found. Please make sure Host is in the game lobby.',
+    lobbyClosedBtn: 'Game in Progress (Registration Closed)',
     // Player Game
     getReady: 'Get Ready! Question',
     answerSubmitted: 'Answer submitted! Waiting for other players...',
@@ -177,7 +194,18 @@ export const translations = {
     date: 'Date',
     // BGM settings
     bgmMusic: 'BGM Music',
-    bgmVolume: 'BGM Volume'
+    bgmVolume: 'BGM Volume',
+    // Social Sharing
+    shareQuiz: 'Share Quiz',
+    shareSubtitle: 'Share this quiz directly to social media with a preview card image!',
+    previewCard: 'Preview Card Image',
+    downloadCard: 'Download Card Image',
+    shareWhatsApp: 'WhatsApp',
+    shareTwitter: 'Twitter / X',
+    shareFacebook: 'Facebook',
+    shareDevice: 'Share via Device',
+    copyShareLink: 'Copy Link',
+    shareMessageText: 'Join and play this awesome trivia quiz on QuizArena Live!'
   }
 };
 

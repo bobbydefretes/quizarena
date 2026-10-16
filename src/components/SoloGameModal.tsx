@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { Quiz, Language } from '../types';
 import { saveGameHistoryRecord } from '../utils/storage';
 import { translations } from '../utils/i18n';
-import { Trophy, CheckCircle2, XCircle, ArrowRight, X, Clock, Flame } from 'lucide-react';
+import { Trophy, CheckCircle2, XCircle, ArrowRight, X, Clock, Flame, Share2 } from 'lucide-react';
 import { soundManager } from '../utils/sound';
 import confetti from 'canvas-confetti';
+import { ShareQuizModal } from './ShareQuizModal';
 
 interface SoloGameModalProps {
   quiz: Quiz;
@@ -25,6 +26,7 @@ export const SoloGameModal: React.FC<SoloGameModalProps> = ({
   const [streak, setStreak] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
   const [historySaved, setHistorySaved] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const currentQ = quiz.questions[currentIndex];
 
@@ -177,10 +179,21 @@ export const SoloGameModal: React.FC<SoloGameModalProps> = ({
               <div className="text-4xl font-black text-yellow-400">{score} pts</div>
             </div>
 
-            <div className="flex justify-center space-x-3">
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                onClick={() => {
+                  soundManager.playClick();
+                  setShowShareModal(true);
+                }}
+                className="px-6 py-3 rounded-xl bg-blue-950 hover:bg-blue-800 text-yellow-400 border border-blue-700 font-bold text-sm shadow-md flex items-center space-x-2 transition-all transform hover:-translate-y-0.5"
+              >
+                <Share2 className="w-4 h-4 text-yellow-400" />
+                <span>{t.shareQuiz}</span>
+              </button>
+
               <button
                 onClick={() => { soundManager.playClick(); onClose(); }}
-                className="px-6 py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-lg shadow-yellow-400/30"
+                className="px-6 py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-lg shadow-yellow-400/30 transition-all transform hover:-translate-y-0.5"
               >
                 {t.returnDashboard}
               </button>
@@ -188,6 +201,16 @@ export const SoloGameModal: React.FC<SoloGameModalProps> = ({
           </div>
         )}
       </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <ShareQuizModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          quiz={quiz}
+          lang={lang}
+        />
+      )}
     </div>
   );
 };

@@ -1,3 +1,5 @@
+export type Language = 'id' | 'en';
+
 export interface Question {
   id: string;
   question: string;

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Quiz } from '../types';
-import { Search, Play, QrCode, Edit3, Trash2, Sparkles, Clock, HelpCircle, User, PlusCircle } from 'lucide-react';
+import { Search, Play, QrCode, Edit3, Trash2, Sparkles, Clock, HelpCircle, User, PlusCircle, Share2 } from 'lucide-react';
 import { soundManager } from '../utils/sound';
 import { Language, translations } from '../utils/i18n';
+import { ShareQuizModal } from './ShareQuizModal';
 
 interface QuizListProps {
   quizzes: Quiz[];
@@ -28,6 +29,7 @@ export const QuizList: React.FC<QuizListProps> = ({
   const t = translations[lang];
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [sharingQuiz, setSharingQuiz] = useState<Quiz | null>(null);
 
   const categories = [t.allCategories, ...Array.from(new Set(quizzes.map(q => q.category)))];
 
@@ -198,6 +200,16 @@ export const QuizList: React.FC<QuizListProps> = ({
 
                 <div className="flex items-center space-x-1">
                   <button
+                    onClick={() => {
+                      soundManager.playClick();
+                      setSharingQuiz(quiz);
+                    }}
+                    className="p-2 rounded-xl bg-blue-800 hover:bg-blue-700 text-yellow-400 hover:text-yellow-300 transition-colors border border-blue-700"
+                    title={t.shareQuiz}
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                  <button
                     onClick={() => { soundManager.playClick(); onEditQuiz(quiz); }}
                     className="p-2 rounded-xl bg-blue-800 hover:bg-blue-700 text-blue-200 hover:text-white transition-colors"
                     title="Edit Quiz"
@@ -221,6 +233,16 @@ export const QuizList: React.FC<QuizListProps> = ({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Share Quiz Modal */}
+      {sharingQuiz && (
+        <ShareQuizModal
+          isOpen={!!sharingQuiz}
+          onClose={() => setSharingQuiz(null)}
+          quiz={sharingQuiz}
+          lang={lang}
+        />
       )}
     </div>
   );

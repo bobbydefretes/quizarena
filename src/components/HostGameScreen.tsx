@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { GameSession } from '../types';
-import { saveActiveSession, getActiveSession } from '../utils/storage';
+import { pushLiveSession, fetchLiveSession, subscribeToSessionSync } from '../utils/gameSync';
 import { Clock, CheckCircle2, Trophy, ArrowRight, BarChart3, TrendingUp } from 'lucide-react';
 import { soundManager } from '../utils/sound';
 import confetti from 'canvas-confetti';
@@ -19,6 +19,7 @@ import {
 interface HostGameScreenProps {
   initialSession: GameSession;
   onGameOver: (session: GameSession) => void;
+  lang?: string;
 }
 
 export const HostGameScreen: React.FC<HostGameScreenProps> = ({
@@ -32,16 +33,34 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
   const currentQ = session.quiz.questions[session.currentQuestionIndex];
   const totalQ = session.quiz.questions.length;
 
-  // Poll for player updates and handle timer
+  // Poll for player answers and subscribe to real-time events
   useEffect(() => {
-    const timerInterval = setInterval(() => {
-      const live = getActiveSession(session.pin);
-      if (live) {
-        setSession(live);
+    const unsubscribe = subscribeToSessionSync((msg) => {
+      if (msg.pin === session.pin) {
+        if (msg.session) {
+          setSession(msg.session);
+        } else if (msg.type === 'PLAYER_ANSWER') {
+          fetchLiveSession(session.pin).then((live) => {
+            if (live) setSession(live);
+          });
+        }
       }
-    }, 500);
+    });
 
-    return () => clearInterval(timerInterval);
+    const timerInterval = setInterval(async () => {
+      const live = await fetchLiveSession(session.pin);
+      if (live) {
+        setSession((prev) => ({
+          ...prev,
+          players: live.players || prev.players
+        }));
+      }
+    }, 400);
+
+    return () => {
+      unsubscribe();
+      clearInterval(timerInterval);
+    };
   }, [session.pin]);
 
   // Main Game Loop Timer
@@ -63,7 +82,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
             state: 'question_active',
             timeRemaining: qTime
           };
-          saveActiveSession(updated);
+          pushLiveSession(updated);
           setSession(updated);
           return qTime;
         } else if (session.state === 'question_active') {
@@ -73,7 +92,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
             state: 'question_reveal',
             timeRemaining: 5
           };
-          saveActiveSession(updated);
+          pushLiveSession(updated);
           setSession(updated);
           return 5;
         } else if (session.state === 'question_reveal') {
@@ -84,7 +103,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
               currentQuestionIndex: session.currentQuestionIndex + 1,
               timeRemaining: 3
             };
-            saveActiveSession(updated);
+            pushLiveSession(updated);
             setSession(updated);
             return 3;
           } else {
@@ -95,7 +114,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
               state: 'podium',
               timeRemaining: 0
             };
-            saveActiveSession(updated);
+            pushLiveSession(updated);
             setSession(updated);
             onGameOver(updated);
             return 0;
@@ -106,7 +125,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [session.state, session.currentQuestionIndex, totalQ, currentQ, session]);
+  }, [session.state, session.currentQuestionIndex, totalQ, currentQ, session, onGameOver]);
 
   const handleNextManually = () => {
     soundManager.playClick();
@@ -116,7 +135,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
         state: 'question_reveal',
         timeRemaining: 5
       };
-      saveActiveSession(updated);
+      pushLiveSession(updated);
       setSession(updated);
       setTimeRemaining(5);
     } else if (session.state === 'question_reveal') {
@@ -127,7 +146,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
           currentQuestionIndex: session.currentQuestionIndex + 1,
           timeRemaining: 3
         };
-        saveActiveSession(updated);
+        pushLiveSession(updated);
         setSession(updated);
         setTimeRemaining(3);
       } else {
@@ -138,7 +157,7 @@ export const HostGameScreen: React.FC<HostGameScreenProps> = ({
           state: 'podium',
           timeRemaining: 0
         };
-        saveActiveSession(updated);
+        pushLiveSession(updated);
         setSession(updated);
         onGameOver(updated);
       }

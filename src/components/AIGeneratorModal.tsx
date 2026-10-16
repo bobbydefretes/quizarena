@@ -8,12 +8,14 @@ interface AIGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onQuizGenerated: (quiz: Quiz) => void;
+  lang?: string;
 }
 
 export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   isOpen,
   onClose,
-  onQuizGenerated
+  onQuizGenerated,
+  lang = 'id'
 }) => {
   const [topic, setTopic] = useState('');
   const [questionCount, setQuestionCount] = useState(5);

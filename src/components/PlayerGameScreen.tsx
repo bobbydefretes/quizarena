@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { GameSession, Player, Language } from '../types';
-import { getActiveSession, saveActiveSession } from '../utils/storage';
+import { fetchLiveSession, pushLiveSession, subscribeToSessionSync, submitPlayerAnswer } from '../utils/gameSync';
 import { translations } from '../utils/i18n';
-import { Trophy, CheckCircle2, XCircle, Flame, Clock } from 'lucide-react';
+import { Trophy, CheckCircle2, XCircle, Flame, Clock, Share2 } from 'lucide-react';
 import { soundManager } from '../utils/sound';
 import confetti from 'canvas-confetti';
+import { ShareQuizModal } from './ShareQuizModal';
 
 interface PlayerGameScreenProps {
   initialSession: GameSession;
@@ -25,24 +26,38 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
   const [answeredThisRound, setAnsweredThisRound] = useState(false);
   const [lastPointsEarned, setLastPointsEarned] = useState<number | null>(null);
   const [confettiTriggered, setConfettiTriggered] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
-  // Poll session state
+  // Poll session state & subscribe to real-time events
   useEffect(() => {
-    const interval = setInterval(() => {
-      const live = getActiveSession(session.pin);
-      if (live) {
-        if (live.currentQuestionIndex !== session.currentQuestionIndex || live.state === 'question_countdown') {
-          if (live.currentQuestionIndex !== session.currentQuestionIndex) {
-            setSelectedAnswer(null);
-            setAnsweredThisRound(false);
-            setLastPointsEarned(null);
-          }
+    const handleUpdate = (live: GameSession) => {
+      if (live.currentQuestionIndex !== session.currentQuestionIndex || live.state === 'question_countdown') {
+        if (live.currentQuestionIndex !== session.currentQuestionIndex) {
+          setSelectedAnswer(null);
+          setAnsweredThisRound(false);
+          setLastPointsEarned(null);
         }
-        setSession(live);
+      }
+      setSession(live);
+    };
+
+    const unsubscribe = subscribeToSessionSync((msg) => {
+      if (msg.pin === session.pin && msg.session) {
+        handleUpdate(msg.session);
+      }
+    });
+
+    const interval = setInterval(async () => {
+      const live = await fetchLiveSession(session.pin);
+      if (live) {
+        handleUpdate(live);
       }
     }, 300);
 
-    return () => clearInterval(interval);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, [session.pin, session.currentQuestionIndex]);
 
   // Trigger confetti when podium is reached
@@ -58,7 +73,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
   const maxTime = currentQ?.timeLimit || 15;
   const timePercent = Math.max(0, Math.min(100, (session.timeRemaining / maxTime) * 100));
 
-  const handleSelectAnswer = (optIndex: number) => {
+  const handleSelectAnswer = async (optIndex: number) => {
     if (answeredThisRound || session.state !== 'question_active') return;
 
     setSelectedAnswer(optIndex);
@@ -74,7 +89,10 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
     const points = isCorrect ? 1000 : 0;
     setLastPointsEarned(points);
 
-    // Update player score in session
+    // Submit answer to server and broadcast
+    await submitPlayerAnswer(session.pin, currentPlayer.id, session.currentQuestionIndex, optIndex, isCorrect, points);
+
+    // Update player score in session locally
     const updatedPlayers = (session.players || []).map(p => {
       if (p.id === currentPlayer.id) {
         const newScore = p.score + points;
@@ -101,7 +119,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
       ...session,
       players: updatedPlayers
     };
-    saveActiveSession(updatedSession);
+    pushLiveSession(updatedSession);
     setSession(updatedSession);
 
     // If solo player (only 1 player in session), instantly reveal answer after 800ms
@@ -112,7 +130,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
           state: 'question_reveal',
           timeRemaining: 5
         };
-        saveActiveSession(revealedSession);
+        pushLiveSession(revealedSession);
         setSession(revealedSession);
       }, 800);
     }
@@ -254,7 +272,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
                       currentQuestionIndex: session.currentQuestionIndex + 1,
                       timeRemaining: session.quiz.questions[session.currentQuestionIndex + 1].timeLimit || 15
                     };
-                    saveActiveSession(nextSession);
+                    pushLiveSession(nextSession);
                     setSession(nextSession);
                   } else {
                     const podiumSession: GameSession = {
@@ -262,7 +280,7 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
                       state: 'podium',
                       timeRemaining: 0
                     };
-                    saveActiveSession(podiumSession);
+                    pushLiveSession(podiumSession);
                     setSession(podiumSession);
                   }
                 }}
@@ -281,13 +299,37 @@ export const PlayerGameScreen: React.FC<PlayerGameScreenProps> = ({
           <h2 className="text-2xl font-black text-white mb-2">{t.gameOver}</h2>
           <p className="text-blue-200 text-sm mb-6">{t.finalScore} <strong className="text-yellow-400">{livePlayer.score} pts</strong></p>
 
-          <button
-            onClick={onLeave}
-            className="px-6 py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-lg shadow-yellow-400/30"
-          >
-            {t.returnDashboard}
-          </button>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              onClick={() => {
+                soundManager.playClick();
+                setShowShareModal(true);
+              }}
+              className="px-6 py-3 rounded-xl bg-blue-950 hover:bg-blue-800 text-yellow-400 border border-blue-700 font-bold text-sm shadow-md flex items-center space-x-2 transition-all transform hover:-translate-y-0.5"
+            >
+              <Share2 className="w-4 h-4 text-yellow-400" />
+              <span>{t.shareQuiz}</span>
+            </button>
+
+            <button
+              onClick={onLeave}
+              className="px-6 py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-black text-sm shadow-lg shadow-yellow-400/30 transition-all transform hover:-translate-y-0.5"
+            >
+              {t.returnDashboard}
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <ShareQuizModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          quiz={session.quiz}
+          gamePin={session.pin}
+          lang={lang}
+        />
       )}
     </div>
   );
